@@ -1,0 +1,31 @@
+name: bttopn
+options:
+  bundleIdPrefix: com.personal
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+
+targets:
+  bttopn:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+        excludes:
+          - "*.h"
+    settings:
+      base:
+        INFOPLIST_FILE: Resources/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/TouchBarPrivateApi.h
+        PRODUCT_BUNDLE_IDENTIFIER: com.personal.bttopn
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+        OTHER_LDFLAGS:
+          - "-F/System/Library/PrivateFrameworks"
+          - "-framework"
+          - "DFRFoundation"
