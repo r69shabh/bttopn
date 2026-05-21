@@ -95,7 +95,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleTouchBar() {
         touchBarManager.toggleTouchBar()
-        toggleMenuItem.title = toggleMenuItem.title == "Show Keys" ? "Hide Keys" : "Show Keys"
+        // Derive the new title from the ground-truth state so it never drifts
+        toggleMenuItem.title = touchBarManager.keysVisible ? "Hide Keys" : "Show Keys"
     }
 
     @objc private func openEditWindow() {

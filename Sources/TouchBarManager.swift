@@ -16,9 +16,83 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     private var controlStripItem: NSCustomTouchBarItem?
 
+    // Tracks whether the user has intentionally enabled the keys overlay.
+    // We only auto-re-present when this is true.
+    // Read-only externally so AppDelegate can sync menu title.
+    private(set) var keysVisible: Bool = false
+
+    // Timer used to debounce rapid app-switch events
+    private var representTimer: Timer?
+
     init(configManager: ConfigManager) {
         self.configManager = configManager
         super.init()
+        registerAppSwitchObserver()
+    }
+
+    deinit {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    // MARK: - App-Switch Observer
+    //
+    // When any other app becomes frontmost, macOS automatically dismisses our
+    // system-modal Touch Bar. We watch for that event and, if the user had the
+    // keys visible, we re-present the bar after a short delay so it stays put
+    // even inside Raycast, Spotlight, or any other launcher.
+
+    private func registerAppSwitchObserver() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(activeAppChanged(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+    }
+
+    @objc private func activeAppChanged(_ notification: Notification) {
+        guard keysVisible else { return }
+
+        // Determine the newly active app
+        let activeApp = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+            as? NSRunningApplication
+        let activeBundleID = activeApp?.bundleIdentifier ?? ""
+
+        // Don't fight ourselves — if bttopn somehow becomes active, skip
+        let ownBundleID = Bundle.main.bundleIdentifier ?? "com.personal.bttopn"
+        if activeBundleID == ownBundleID { return }
+
+        // Cancel any pending re-present
+        representTimer?.invalidate()
+
+        // Wait 200ms — enough for the other app to fully take the Touch Bar —
+        // then re-assert our system modal on top of it.
+        representTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.repaintTouchBar()
+            }
+        }
+    }
+
+    // Re-presents the Touch Bar without toggling keysVisible state.
+    private func repaintTouchBar() {
+        guard keysVisible else { return }
+
+        // Dismiss stale modal first
+        if let existing = touchBar {
+            NSTouchBar.dismissSystemModalTouchBar(existing)
+        }
+
+        let tb = NSTouchBar()
+        tb.delegate = self
+        tb.defaultItemIdentifiers = [.keyGroup]
+        self.touchBar = tb
+
+        DFRSystemModalShowsCloseBoxWhenFrontMost(false)
+        NSTouchBar.presentSystemModalTouchBar(tb, placement: 0,
+                                               systemTrayItemIdentifier: nil)
+        showControlStripIcon()
     }
 
     // MARK: - Control Strip Icon
@@ -70,12 +144,18 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         DFRSystemModalShowsCloseBoxWhenFrontMost(false)
         NSTouchBar.presentSystemModalTouchBar(tb, placement: 0,
                                                systemTrayItemIdentifier: nil)
-        
+
+        keysVisible = true
+
         // Ensure the control strip icon stays visible and active
         showControlStripIcon()
     }
 
     func dismissTouchBar() {
+        keysVisible = false
+        representTimer?.invalidate()
+        representTimer = nil
+
         if let tb = touchBar {
             NSTouchBar.dismissSystemModalTouchBar(tb)
         }
@@ -86,7 +166,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     }
 
     func toggleTouchBar() {
-        if touchBar != nil {
+        if keysVisible {
             dismissTouchBar()
         } else {
             presentTouchBar()
@@ -95,7 +175,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     /// Rebuild after config change
     func rebuild() {
-        if touchBar != nil {
+        if keysVisible {
             presentTouchBar()
         }
     }
