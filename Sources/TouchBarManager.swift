@@ -66,9 +66,10 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         // Cancel any pending re-present
         representTimer?.invalidate()
 
-        // Wait 200ms — enough for the other app to fully take the Touch Bar —
-        // then re-assert our system modal on top of it.
-        representTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
+        // Wait 80ms — just enough for the OS transition to settle before we
+        // re-assert. Too short and we race with TouchBarServer; too long and
+        // the user sees the default bar for a noticeable moment.
+        representTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 self?.repaintTouchBar()
             }
@@ -76,21 +77,30 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     }
 
     // Re-presents the Touch Bar without toggling keysVisible state.
+    //
+    // KEY INSIGHT for no-jerk behaviour:
+    // macOS has already dismissed our modal by the time this runs.
+    // Calling dismissSystemModalTouchBar here would add a second blank frame
+    // (dismiss → blank → present) causing the visible "jerk".
+    // Instead we just re-assert the same cached NSTouchBar object directly
+    // (blank → present), which is one transition instead of two.
     private func repaintTouchBar() {
         guard keysVisible else { return }
 
-        // Dismiss stale modal first
-        if let existing = touchBar {
-            NSTouchBar.dismissSystemModalTouchBar(existing)
+        // Reuse the cached bar if it still exists; only allocate a new one
+        // if this is the very first present or after a user-initiated dismiss.
+        if touchBar == nil {
+            let tb = NSTouchBar()
+            tb.delegate = self
+            tb.defaultItemIdentifiers = [.keyGroup]
+            self.touchBar = tb
         }
 
-        let tb = NSTouchBar()
-        tb.delegate = self
-        tb.defaultItemIdentifiers = [.keyGroup]
-        self.touchBar = tb
-
+        // Do NOT call dismissSystemModalTouchBar here — macOS already did
+        // that when the other app took focus. Adding another dismiss just
+        // creates an extra blank frame, which is the "jerk" the user sees.
         DFRSystemModalShowsCloseBoxWhenFrontMost(false)
-        NSTouchBar.presentSystemModalTouchBar(tb, placement: 0,
+        NSTouchBar.presentSystemModalTouchBar(touchBar!, placement: 0,
                                                systemTrayItemIdentifier: nil)
         showControlStripIcon()
     }
@@ -128,12 +138,12 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // MARK: - Present / Dismiss
 
     func presentTouchBar() {
-        // Dismiss any stale modal
+        // On an explicit user-initiated show, always build a fresh bar so any
+        // config changes (from Edit Keys) are reflected immediately.
         if let existing = touchBar {
             NSTouchBar.dismissSystemModalTouchBar(existing)
         }
 
-        // Build touch bar: just the key buttons, no custom close button
         let tb = NSTouchBar()
         tb.delegate = self
         tb.defaultItemIdentifiers = [.keyGroup]
@@ -159,8 +169,9 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         if let tb = touchBar {
             NSTouchBar.dismissSystemModalTouchBar(tb)
         }
+        // Nil out the cached bar so the next presentTouchBar() builds fresh
         touchBar = nil
-        
+
         // Ensure the control strip icon stays visible
         showControlStripIcon()
     }
