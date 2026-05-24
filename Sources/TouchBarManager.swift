@@ -24,6 +24,11 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // Timer used to debounce rapid app-switch events
     private var representTimer: Timer?
 
+    // Tracks whether the system is currently asleep.
+    // All observer callbacks and timer scheduling are suppressed during sleep
+    // to prevent waking the CPU unnecessarily.
+    private var isSleeping: Bool = false
+
     init(configManager: ConfigManager) {
         self.configManager = configManager
         super.init()
@@ -52,6 +57,10 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     }
 
     @objc private func activeAppChanged(_ notification: Notification) {
+        // Do nothing while the system is asleep — background daemons still
+        // fire workspace notifications during sleep, which would schedule
+        // timers and burn CPU/battery for no reason.
+        guard !isSleeping else { return }
         guard keysVisible else { return }
 
         // Determine the newly active app
@@ -69,11 +78,18 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         // Wait 80ms — just enough for the OS transition to settle before we
         // re-assert. Too short and we race with TouchBarServer; too long and
         // the user sees the default bar for a noticeable moment.
-        representTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: false) { [weak self] _ in
+        //
+        // POWER NOTE: We set a 20ms tolerance (25% of the interval) so the OS
+        // can coalesce this timer with other system timers instead of forcing
+        // a dedicated CPU wakeup at exactly the 80ms mark.
+        let timer = Timer(timeInterval: 0.08, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 self?.repaintTouchBar()
             }
         }
+        timer.tolerance = 0.02
+        RunLoop.main.add(timer, forMode: .common)
+        representTimer = timer
     }
 
     // Re-presents the Touch Bar without toggling keysVisible state.
@@ -174,6 +190,46 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
         // Ensure the control strip icon stays visible
         showControlStripIcon()
+    }
+
+    // MARK: - Sleep / Wake
+
+    /// Called by AppDelegate when macOS is about to sleep.
+    /// Tears down all active timers and releases the Touch Bar system-modal
+    /// overlay so the T1/T2 chip and display subsystem can power down fully.
+    /// The `keysVisible` flag is preserved so we can restore state on wake.
+    func pauseForSleep() {
+        isSleeping = true
+
+        // Kill any pending re-present timer — nothing should fire during sleep.
+        representTimer?.invalidate()
+        representTimer = nil
+
+        // Dismiss the system-modal overlay without touching keysVisible.
+        // This allows the Touch Bar chip to enter its low-power state.
+        if let tb = touchBar {
+            NSTouchBar.dismissSystemModalTouchBar(tb)
+        }
+        // Keep `touchBar` object alive so we can re-present it on wake
+        // without allocating a new one unnecessarily.
+    }
+
+    /// Called by AppDelegate when macOS has finished waking from sleep.
+    /// Re-presents the Touch Bar overlay if it was visible before sleep,
+    /// and re-arms the app-switch observer.
+    func resumeAfterWake() {
+        isSleeping = false
+
+        guard keysVisible else { return }
+
+        // Small delay to let the system (TouchBarServer, WindowServer) fully
+        // initialize before we try to push a system-modal overlay.
+        let timer = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
+            self?.repaintTouchBar()
+        }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        representTimer = timer
     }
 
     func toggleTouchBar() {

@@ -10,6 +10,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Menu items that need state updates
     private var toggleMenuItem: NSMenuItem!
 
+    // Held for the lifetime of the app to tell macOS this process performs
+    // user-initiated work. This enables correct App Nap classification while
+    // still allowing the system to sleep fully (we use
+    // .userInitiatedAllowingIdleSystemSleep rather than .userInitiated).
+    private var backgroundActivity: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 1. Check Accessibility permissions
         if !KeySimulator.checkAccessibility(promptUser: true) {
@@ -35,6 +41,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 4. Add ⌨️ icon to Control Strip (next to default brightness/volume/etc)
         touchBarManager.showControlStripIcon()
+
+        // 5. Register for system sleep/wake notifications.
+        //    This is the primary battery-drain fix: we pause all Touch Bar
+        //    activity before sleep and restore it cleanly on wake.
+        let workspaceNC = NSWorkspace.shared.notificationCenter
+        workspaceNC.addObserver(self,
+                                selector: #selector(systemWillSleep(_:)),
+                                name: NSWorkspace.willSleepNotification,
+                                object: nil)
+        workspaceNC.addObserver(self,
+                                selector: #selector(systemDidWake(_:)),
+                                name: NSWorkspace.didWakeNotification,
+                                object: nil)
+
+        // 6. Declare this process as user-initiated work that allows idle system
+        //    sleep. This gives the OS accurate information for App Nap decisions
+        //    while still permitting full system sleep when idle.
+        backgroundActivity = ProcessInfo.processInfo.beginActivity(
+            options: .userInitiatedAllowingIdleSystemSleep,
+            reason: "bttopn Touch Bar key overlay"
+        )
     }
 
     // Prevent app from quitting when Touch Bar overlay is dismissed
@@ -120,6 +147,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         touchBarManager.dismissTouchBar()
+        // End background activity assertion cleanly on quit
+        if let activity = backgroundActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+        }
         NSApp.terminate(nil)
+    }
+
+    // MARK: - Sleep / Wake
+
+    @objc private func systemWillSleep(_ notification: Notification) {
+        // Tell TouchBarManager to tear down timers and dismiss the
+        // system-modal Touch Bar overlay before the machine sleeps.
+        // This prevents battery drain from:
+        //   \u2022 Timer fires during sleep waking the CPU
+        //   \u2022 The T1/T2 Touch Bar chip staying in an active state
+        //   \u2022 Background workspace notifications scheduling work during sleep
+        touchBarManager.pauseForSleep()
+    }
+
+    @objc private func systemDidWake(_ notification: Notification) {
+        // Restore the Touch Bar overlay and re-arm all observers now that
+        // the system is fully awake.
+        touchBarManager.resumeAfterWake()
     }
 }
