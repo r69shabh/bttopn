@@ -24,6 +24,9 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // Timer used to debounce rapid app-switch events
     private var representTimer: Timer?
 
+    // KVO observer to detect when the OS hides our Touch Bar
+    private var touchBarObserver: NSKeyValueObservation?
+
     // Tracks whether the system is currently asleep.
     // All observer callbacks and timer scheduling are suppressed during sleep
     // to prevent waking the CPU unnecessarily.
@@ -92,6 +95,30 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         representTimer = timer
     }
 
+    private func setupTouchBar() -> NSTouchBar {
+        let tb = NSTouchBar()
+        tb.delegate = self
+        tb.defaultItemIdentifiers = [.keyGroup]
+        
+        // KVO observer catches EVERY time the OS hides our Touch Bar, even if 
+        // NSWorkspace.didActivateApplicationNotification fails to fire (e.g. floating panels like Raycast)
+        self.touchBarObserver = tb.observe(\.isVisible, options: [.new]) { [weak self] bar, change in
+            guard let self = self, !self.isSleeping, self.keysVisible else { return }
+            
+            if let visible = change.newValue, !visible {
+                self.representTimer?.invalidate()
+                // Wait 100ms for OS transitions to settle, then re-assert
+                let timer = Timer(timeInterval: 0.1, repeats: false) { [weak s = self] _ in
+                    DispatchQueue.main.async { s?.repaintTouchBar() }
+                }
+                timer.tolerance = 0.02
+                RunLoop.main.add(timer, forMode: .common)
+                self.representTimer = timer
+            }
+        }
+        return tb
+    }
+
     // Re-presents the Touch Bar without toggling keysVisible state.
     //
     // KEY INSIGHT for no-jerk behaviour:
@@ -106,10 +133,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         // Reuse the cached bar if it still exists; only allocate a new one
         // if this is the very first present or after a user-initiated dismiss.
         if touchBar == nil {
-            let tb = NSTouchBar()
-            tb.delegate = self
-            tb.defaultItemIdentifiers = [.keyGroup]
-            self.touchBar = tb
+            self.touchBar = setupTouchBar()
         }
 
         // Do NOT call dismissSystemModalTouchBar here — macOS already did
@@ -160,15 +184,12 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
             NSTouchBar.dismissSystemModalTouchBar(existing)
         }
 
-        let tb = NSTouchBar()
-        tb.delegate = self
-        tb.defaultItemIdentifiers = [.keyGroup]
-        self.touchBar = tb
+        self.touchBar = setupTouchBar()
 
         // Hide the native macOS ✕ close box on the left.
         // Our ⌨️ stays in the Control Strip and acts as the toggle.
         DFRSystemModalShowsCloseBoxWhenFrontMost(false)
-        NSTouchBar.presentSystemModalTouchBar(tb, placement: 0,
+        NSTouchBar.presentSystemModalTouchBar(touchBar!, placement: 0,
                                                systemTrayItemIdentifier: nil)
 
         keysVisible = true
@@ -181,6 +202,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         keysVisible = false
         representTimer?.invalidate()
         representTimer = nil
+        touchBarObserver?.invalidate()
+        touchBarObserver = nil
 
         if let tb = touchBar {
             NSTouchBar.dismissSystemModalTouchBar(tb)
