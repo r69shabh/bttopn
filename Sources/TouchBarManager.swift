@@ -21,8 +21,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // Read-only externally so AppDelegate can sync menu title.
     private(set) var keysVisible: Bool = false
 
-    // Timer used to debounce rapid app-switch events
-    private var representTimer: Timer?
+    // Timers used to debounce rapid app-switch events and ensure persistent visibility
+    private var representTimers: [Timer] = []
 
     // KVO observer to detect when the OS hides our Touch Bar
     private var touchBarObserver: NSKeyValueObservation?
@@ -75,24 +75,26 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         let ownBundleID = Bundle.main.bundleIdentifier ?? "com.personal.bttopn"
         if activeBundleID == ownBundleID { return }
 
-        // Cancel any pending re-present
-        representTimer?.invalidate()
+        // Cancel any pending re-present timers
+        scheduleStaggeredRepaints()
+    }
 
-        // Wait 80ms — just enough for the OS transition to settle before we
-        // re-assert. Too short and we race with TouchBarServer; too long and
-        // the user sees the default bar for a noticeable moment.
-        //
-        // POWER NOTE: We set a 20ms tolerance (25% of the interval) so the OS
-        // can coalesce this timer with other system timers instead of forcing
-        // a dedicated CPU wakeup at exactly the 80ms mark.
-        let timer = Timer(timeInterval: 0.08, repeats: false) { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.repaintTouchBar()
+    private func scheduleStaggeredRepaints() {
+        representTimers.forEach { $0.invalidate() }
+        representTimers.removeAll()
+
+        // Staggered delays: catching fast apps (100ms) and slow apps like Raycast (300ms, 600ms, 1.0s)
+        let delays = [0.1, 0.3, 0.6, 1.0]
+        for delay in delays {
+            let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.repaintTouchBar()
+                }
             }
+            timer.tolerance = 0.05
+            RunLoop.main.add(timer, forMode: .common)
+            representTimers.append(timer)
         }
-        timer.tolerance = 0.02
-        RunLoop.main.add(timer, forMode: .common)
-        representTimer = timer
     }
 
     private func setupTouchBar() -> NSTouchBar {
@@ -106,14 +108,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
             guard let self = self, !self.isSleeping, self.keysVisible else { return }
             
             if let visible = change.newValue, !visible {
-                self.representTimer?.invalidate()
-                // Wait 100ms for OS transitions to settle, then re-assert
-                let timer = Timer(timeInterval: 0.1, repeats: false) { [weak s = self] _ in
-                    DispatchQueue.main.async { s?.repaintTouchBar() }
-                }
-                timer.tolerance = 0.02
-                RunLoop.main.add(timer, forMode: .common)
-                self.representTimer = timer
+                self.scheduleStaggeredRepaints()
             }
         }
         return tb
@@ -200,8 +195,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     func dismissTouchBar() {
         keysVisible = false
-        representTimer?.invalidate()
-        representTimer = nil
+        representTimers.forEach { $0.invalidate() }
+        representTimers.removeAll()
         touchBarObserver?.invalidate()
         touchBarObserver = nil
 
@@ -225,8 +220,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         isSleeping = true
 
         // Kill any pending re-present timer — nothing should fire during sleep.
-        representTimer?.invalidate()
-        representTimer = nil
+        representTimers.forEach { $0.invalidate() }
+        representTimers.removeAll()
 
         // Dismiss the system-modal overlay without touching keysVisible.
         // This allows the Touch Bar chip to enter its low-power state.
@@ -252,7 +247,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         }
         timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
-        representTimer = timer
+        representTimers.append(timer)
     }
 
     func toggleTouchBar() {
