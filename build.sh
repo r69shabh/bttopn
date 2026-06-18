@@ -14,9 +14,10 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-# Compile Swift sources with bridging header + private framework
+# Compile Swift sources for Apple Silicon (arm64)
 swiftc \
-    -o "$APP_BUNDLE/Contents/MacOS/$APP_NAME" \
+    -target arm64-apple-macosx14.0 \
+    -o "$BUILD_DIR/${APP_NAME}_arm64" \
     -import-objc-header Sources/TouchBarPrivateApi.h \
     -framework AppKit \
     -framework Carbon \
@@ -30,6 +31,31 @@ swiftc \
     Sources/ConfigManager.swift \
     Sources/KeyCodes.swift \
     Sources/EditKeysWindow.swift
+
+# Compile Swift sources for Intel (x86_64)
+swiftc \
+    -target x86_64-apple-macosx14.0 \
+    -o "$BUILD_DIR/${APP_NAME}_x86_64" \
+    -import-objc-header Sources/TouchBarPrivateApi.h \
+    -framework AppKit \
+    -framework Carbon \
+    -F /System/Library/PrivateFrameworks \
+    -framework DFRFoundation \
+    -suppress-warnings \
+    Sources/main.swift \
+    Sources/AppDelegate.swift \
+    Sources/TouchBarManager.swift \
+    Sources/KeySimulator.swift \
+    Sources/ConfigManager.swift \
+    Sources/KeyCodes.swift \
+    Sources/EditKeysWindow.swift
+
+# Create Universal Binary
+lipo -create -output "$APP_BUNDLE/Contents/MacOS/$APP_NAME" \
+    "$BUILD_DIR/${APP_NAME}_arm64" "$BUILD_DIR/${APP_NAME}_x86_64"
+
+# Cleanup intermediate binaries
+rm "$BUILD_DIR/${APP_NAME}_arm64" "$BUILD_DIR/${APP_NAME}_x86_64"
 
 # Copy Info.plist
 cp Resources/Info.plist "$APP_BUNDLE/Contents/"
