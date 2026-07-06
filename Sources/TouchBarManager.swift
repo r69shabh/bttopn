@@ -80,8 +80,16 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         guard keysVisible, !isSleeping else { return }
         // Only act if the Touch Bar is currently hidden — no-op if already visible
         guard let tb = touchBar, !tb.isVisible else { return }
-        // Unconditionally re-assert. If the OS rejects the call it fails silently
-        // and we try again next tick (0.5s). No Secure Input guard needed.
+        
+        // Touch Bar is hidden despite our staggered repaint attempts.
+        // macOS is likely ignoring the `present` call on the stale instance 
+        // (common when Raycast or Spotlight overlays the UI).
+        // We must completely dismiss and rebuild it to force macOS to show it.
+        touchBarObserver?.invalidate()
+        touchBarObserver = nil
+        NSTouchBar.dismissSystemModalTouchBar(tb)
+        self.touchBar = nil
+        
         repaintTouchBar()
     }
 
@@ -181,7 +189,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
         DFRSystemModalShowsCloseBoxWhenFrontMost(false)
         NSTouchBar.presentSystemModalTouchBar(touchBar!, placement: 0,
-                                               systemTrayItemIdentifier: nil)
+                                               systemTrayItemIdentifier: .controlStripItem)
         showControlStripIcon()
     }
 
@@ -224,7 +232,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
         DFRSystemModalShowsCloseBoxWhenFrontMost(false)
         NSTouchBar.presentSystemModalTouchBar(touchBar!, placement: 0,
-                                               systemTrayItemIdentifier: nil)
+                                               systemTrayItemIdentifier: .controlStripItem)
 
         keysVisible = true
 
