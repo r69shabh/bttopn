@@ -1,4 +1,5 @@
 import Cocoa
+import IOKit
 
 // MARK: - Touch Bar Identifiers
 
@@ -21,11 +22,19 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // Read-only externally so AppDelegate can sync menu title.
     private(set) var keysVisible: Bool = false
 
-    // Timers used to debounce rapid app-switch events and ensure persistent visibility
+    // One-shot timers fired immediately after an app-switch / KVO dismissal.
+    // Staggered to catch both fast (hot-start) and slow (cold-start) apps.
     private var representTimers: [Timer] = []
 
-    // KVO observer to detect when the OS hides our Touch Bar
+    // KVO observer: fires whenever the Touch Bar's isVisible property changes.
     private var touchBarObserver: NSKeyValueObservation?
+
+    // Watchdog: a low-frequency repeating timer that re-asserts the Touch Bar
+    // after Secure Input is released (password fields, Wi-Fi prompts, Raycast
+    // search box, etc.). Runs every 2 seconds while keysVisible == true.
+    // This is the definitive fix for cases where the OS silently blocks our
+    // presentSystemModalTouchBar calls while Secure Input is held.
+    private var watchdogTimer: Timer?
 
     // Tracks whether the system is currently asleep.
     // All observer callbacks and timer scheduling are suppressed during sleep
@@ -41,14 +50,83 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     deinit {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         NotificationCenter.default.removeObserver(self)
+        stopWatchdog()
+    }
+
+    // MARK: - Secure Input Detection
+    //
+    // Secure Input is a macOS security mode that prevents other processes from
+    // injecting or intercepting keystrokes (active during password fields, Wi-Fi
+    // prompts, Raycast's search box, etc.).
+    //
+    // While Secure Input is held, presentSystemModalTouchBar is silently blocked
+    // by the OS. We detect it via the IOKit registry (same technique used by
+    // Karabiner-Elements, Alfred, and other professional utilities).
+    //
+    // Returns true if any process currently holds Secure Input.
+    private func isSecureInputActive() -> Bool {
+        // IOServiceGetMatchingService gives us the HID system entry, which
+        // exposes the "SecureInputPID" property when any app holds the lock.
+        let service = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching("IOHIDSystem")
+        )
+        guard service != IO_OBJECT_NULL else { return false }
+        defer { IOObjectRelease(service) }
+
+        var properties: Unmanaged<CFMutableDictionary>?
+        let kr = IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0)
+        guard kr == KERN_SUCCESS, let props = properties?.takeRetainedValue() as? [String: Any] else {
+            return false
+        }
+
+        // "HIDSecureInputPID" > 0 means a process currently holds Secure Input
+        if let pid = props["HIDSecureInputPID"] as? Int32 {
+            return pid > 0
+        }
+        return false
+    }
+
+    // MARK: - Watchdog Timer
+    //
+    // Fires every 2 seconds while keysVisible == true. Checks if our Touch Bar
+    // was silently dismissed (e.g. by Secure Input) and re-asserts it the
+    // moment Secure Input is released. This is the safety net that catches
+    // every case the event-driven timers can't handle.
+
+    private func startWatchdog() {
+        stopWatchdog() // ensure no duplicate
+        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.watchdogTick()
+        }
+        timer.tolerance = 0.5 // allow OS timer coalescing — saves power
+        RunLoop.main.add(timer, forMode: .common)
+        watchdogTimer = timer
+    }
+
+    private func stopWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
+    }
+
+    @objc private func watchdogTick() {
+        guard keysVisible, !isSleeping else { return }
+
+        // Only act if the Touch Bar is currently hidden
+        guard let tb = touchBar, !tb.isVisible else { return }
+
+        // Don't fight Secure Input — wait for it to be released
+        guard !isSecureInputActive() else { return }
+
+        // Touch Bar is hidden, keys should be visible, Secure Input is gone → re-assert
+        repaintTouchBar()
     }
 
     // MARK: - App-Switch Observer
     //
-    // When any other app becomes frontmost, macOS automatically dismisses our
-    // system-modal Touch Bar. We watch for that event and, if the user had the
-    // keys visible, we re-present the bar after a short delay so it stays put
-    // even inside Raycast, Spotlight, or any other launcher.
+    // When any standard app becomes frontmost, macOS dismisses our system-modal
+    // Touch Bar. We watch for that event and, if keysVisible is true, schedule
+    // staggered repaints to race Raycast's opening animation.
 
     private func registerAppSwitchObserver() {
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -60,35 +138,36 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     }
 
     @objc private func activeAppChanged(_ notification: Notification) {
-        // Do nothing while the system is asleep — background daemons still
-        // fire workspace notifications during sleep, which would schedule
-        // timers and burn CPU/battery for no reason.
         guard !isSleeping else { return }
         guard keysVisible else { return }
 
-        // Determine the newly active app
         let activeApp = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
             as? NSRunningApplication
         let activeBundleID = activeApp?.bundleIdentifier ?? ""
 
-        // Don't fight ourselves — if bttopn somehow becomes active, skip
+        // Don't fight ourselves
         let ownBundleID = Bundle.main.bundleIdentifier ?? "com.personal.bttopn"
         if activeBundleID == ownBundleID { return }
 
-        // Cancel any pending re-present timers
         scheduleStaggeredRepaints()
     }
+
+    // MARK: - Staggered Repaints
+    //
+    // Fired after an app-switch or a KVO dismissal. Multiple tiers ensure we
+    // catch both fast apps (hot-start Raycast: ~50ms) and slow apps (cold-start
+    // Raycast: 300ms+). The watchdog handles anything that outlasts 1.5s.
 
     private func scheduleStaggeredRepaints() {
         representTimers.forEach { $0.invalidate() }
         representTimers.removeAll()
 
-        // Staggered delays: catching fast apps (100ms) and slow apps like Raycast (300ms, 600ms, 1.0s)
-        let delays = [0.1, 0.3, 0.6, 1.0]
+        let delays = [0.1, 0.3, 0.6, 1.0, 1.5]
         for delay in delays {
             let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
                 DispatchQueue.main.async {
-                    self?.repaintTouchBar()
+                    guard let self = self, !self.isSecureInputActive() else { return }
+                    self.repaintTouchBar()
                 }
             }
             timer.tolerance = 0.05
@@ -97,16 +176,17 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         }
     }
 
+    // MARK: - Touch Bar Setup (with KVO)
+
     private func setupTouchBar() -> NSTouchBar {
         let tb = NSTouchBar()
         tb.delegate = self
         tb.defaultItemIdentifiers = [.keyGroup]
-        
-        // KVO observer catches EVERY time the OS hides our Touch Bar, even if 
-        // NSWorkspace.didActivateApplicationNotification fails to fire (e.g. floating panels like Raycast)
-        self.touchBarObserver = tb.observe(\.isVisible, options: [.new]) { [weak self] bar, change in
+
+        // KVO: catches EVERY OS-initiated dismissal, including floating panels
+        // like Raycast that don't send NSWorkspace.didActivateApplicationNotification.
+        self.touchBarObserver = tb.observe(\.isVisible, options: [.new]) { [weak self] _, change in
             guard let self = self, !self.isSleeping, self.keysVisible else { return }
-            
             if let visible = change.newValue, !visible {
                 self.scheduleStaggeredRepaints()
             }
@@ -114,6 +194,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         return tb
     }
 
+    // MARK: - Repaint
+    //
     // Re-presents the Touch Bar without toggling keysVisible state.
     //
     // KEY INSIGHT for no-jerk behaviour:
@@ -122,18 +204,14 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // (dismiss → blank → present) causing the visible "jerk".
     // Instead we just re-assert the same cached NSTouchBar object directly
     // (blank → present), which is one transition instead of two.
-    private func repaintTouchBar() {
-        guard keysVisible else { return }
 
-        // Reuse the cached bar if it still exists; only allocate a new one
-        // if this is the very first present or after a user-initiated dismiss.
+    private func repaintTouchBar() {
+        guard keysVisible, !isSleeping else { return }
+
         if touchBar == nil {
             self.touchBar = setupTouchBar()
         }
 
-        // Do NOT call dismissSystemModalTouchBar here — macOS already did
-        // that when the other app took focus. Adding another dismiss just
-        // creates an extra blank frame, which is the "jerk" the user sees.
         DFRSystemModalShowsCloseBoxWhenFrontMost(false)
         NSTouchBar.presentSystemModalTouchBar(touchBar!, placement: 0,
                                                systemTrayItemIdentifier: nil)
@@ -141,9 +219,6 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     }
 
     // MARK: - Control Strip Icon
-    //
-    // Adds a persistent ⌨️ icon in the Control Strip.
-    // Tap it to toggle the custom keys.
 
     func showControlStripIcon() {
         if controlStripItem == nil {
@@ -162,7 +237,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
             self.controlStripItem = item
             NSTouchBarItem.addSystemTrayItem(item)
         }
-        
+
         DFRElementSetControlStripPresenceForIdentifier(.controlStripItem, true)
     }
 
@@ -173,77 +248,69 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // MARK: - Present / Dismiss
 
     func presentTouchBar() {
-        // On an explicit user-initiated show, always build a fresh bar so any
-        // config changes (from Edit Keys) are reflected immediately.
+        // Always build a fresh bar on explicit show so config changes are reflected.
         if let existing = touchBar {
             NSTouchBar.dismissSystemModalTouchBar(existing)
         }
 
         self.touchBar = setupTouchBar()
 
-        // Hide the native macOS ✕ close box on the left.
-        // Our ⌨️ stays in the Control Strip and acts as the toggle.
         DFRSystemModalShowsCloseBoxWhenFrontMost(false)
         NSTouchBar.presentSystemModalTouchBar(touchBar!, placement: 0,
                                                systemTrayItemIdentifier: nil)
 
         keysVisible = true
 
-        // Ensure the control strip icon stays visible and active
         showControlStripIcon()
+        startWatchdog() // begin persistent Secure Input recovery
     }
 
     func dismissTouchBar() {
         keysVisible = false
+
         representTimers.forEach { $0.invalidate() }
         representTimers.removeAll()
+
         touchBarObserver?.invalidate()
         touchBarObserver = nil
+
+        stopWatchdog()
 
         if let tb = touchBar {
             NSTouchBar.dismissSystemModalTouchBar(tb)
         }
-        // Nil out the cached bar so the next presentTouchBar() builds fresh
         touchBar = nil
 
-        // Ensure the control strip icon stays visible
         showControlStripIcon()
     }
 
     // MARK: - Sleep / Wake
 
     /// Called by AppDelegate when macOS is about to sleep.
-    /// Tears down all active timers and releases the Touch Bar system-modal
-    /// overlay so the T1/T2 chip and display subsystem can power down fully.
-    /// The `keysVisible` flag is preserved so we can restore state on wake.
     func pauseForSleep() {
         isSleeping = true
 
-        // Kill any pending re-present timer — nothing should fire during sleep.
         representTimers.forEach { $0.invalidate() }
         representTimers.removeAll()
 
-        // Dismiss the system-modal overlay without touching keysVisible.
-        // This allows the Touch Bar chip to enter its low-power state.
+        stopWatchdog() // critical: no timers during sleep
+
         if let tb = touchBar {
             NSTouchBar.dismissSystemModalTouchBar(tb)
         }
-        // Keep `touchBar` object alive so we can re-present it on wake
-        // without allocating a new one unnecessarily.
+        // Keep touchBar object alive for fast wake restore
     }
 
     /// Called by AppDelegate when macOS has finished waking from sleep.
-    /// Re-presents the Touch Bar overlay if it was visible before sleep,
-    /// and re-arms the app-switch observer.
     func resumeAfterWake() {
         isSleeping = false
 
         guard keysVisible else { return }
 
-        // Small delay to let the system (TouchBarServer, WindowServer) fully
-        // initialize before we try to push a system-modal overlay.
-        let timer = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
+        // Give TouchBarServer time to fully initialize before pushing our overlay.
+        let timer = Timer(timeInterval: 0.5, repeats: false) { [weak self] _ in
             self?.repaintTouchBar()
+            self?.startWatchdog()
         }
         timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
@@ -274,7 +341,6 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
         let item = NSCustomTouchBarItem(identifier: identifier)
 
-        // Build all key buttons in a horizontal stack with zero spacing
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 2
@@ -284,7 +350,6 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
             button.tag = keyMapping.keyCode
             button.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .medium)
 
-            // Width: text width + 24pt padding (12pt each side), minimum 40pt
             let textWidth = (keyMapping.label as NSString)
                 .size(withAttributes: [.font: button.font!]).width
             let btnWidth = ceil(textWidth) + 24
