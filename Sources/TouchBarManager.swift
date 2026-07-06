@@ -1,5 +1,4 @@
 import Cocoa
-import IOKit
 
 // MARK: - Touch Bar Identifiers
 
@@ -53,53 +52,21 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         stopWatchdog()
     }
 
-    // MARK: - Secure Input Detection
-    //
-    // Secure Input is a macOS security mode that prevents other processes from
-    // injecting or intercepting keystrokes (active during password fields, Wi-Fi
-    // prompts, Raycast's search box, etc.).
-    //
-    // While Secure Input is held, presentSystemModalTouchBar is silently blocked
-    // by the OS. We detect it via the IOKit registry (same technique used by
-    // Karabiner-Elements, Alfred, and other professional utilities).
-    //
-    // Returns true if any process currently holds Secure Input.
-    private func isSecureInputActive() -> Bool {
-        // IOServiceGetMatchingService gives us the HID system entry, which
-        // exposes the "SecureInputPID" property when any app holds the lock.
-        let service = IOServiceGetMatchingService(
-            kIOMainPortDefault,
-            IOServiceMatching("IOHIDSystem")
-        )
-        guard service != IO_OBJECT_NULL else { return false }
-        defer { IOObjectRelease(service) }
-
-        var properties: Unmanaged<CFMutableDictionary>?
-        let kr = IORegistryEntryCreateCFProperties(service, &properties, kCFAllocatorDefault, 0)
-        guard kr == KERN_SUCCESS, let props = properties?.takeRetainedValue() as? [String: Any] else {
-            return false
-        }
-
-        // "HIDSecureInputPID" > 0 means a process currently holds Secure Input
-        if let pid = props["HIDSecureInputPID"] as? Int32 {
-            return pid > 0
-        }
-        return false
-    }
-
     // MARK: - Watchdog Timer
     //
-    // Fires every 2 seconds while keysVisible == true. Checks if our Touch Bar
-    // was silently dismissed (e.g. by Secure Input) and re-asserts it the
-    // moment Secure Input is released. This is the safety net that catches
-    // every case the event-driven timers can't handle.
+    // Fires every 0.5 seconds while keysVisible == true. If the Touch Bar is
+    // hidden but should be visible, it unconditionally re-asserts — no Secure
+    // Input check, no guards. If the OS rejects the call (e.g. a system dialog
+    // has hard-locked the Touch Bar), it fails silently and we try again in 0.5s.
+    // The moment any blocker (Raycast, Spotlight, password field, Wi-Fi prompt)
+    // releases control, the very next tick wins and brings the keys back.
 
     private func startWatchdog() {
-        stopWatchdog() // ensure no duplicate
-        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+        stopWatchdog()
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.watchdogTick()
         }
-        timer.tolerance = 0.5 // allow OS timer coalescing — saves power
+        timer.tolerance = 0.1
         RunLoop.main.add(timer, forMode: .common)
         watchdogTimer = timer
     }
@@ -111,14 +78,10 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     @objc private func watchdogTick() {
         guard keysVisible, !isSleeping else { return }
-
-        // Only act if the Touch Bar is currently hidden
+        // Only act if the Touch Bar is currently hidden — no-op if already visible
         guard let tb = touchBar, !tb.isVisible else { return }
-
-        // Don't fight Secure Input — wait for it to be released
-        guard !isSecureInputActive() else { return }
-
-        // Touch Bar is hidden, keys should be visible, Secure Input is gone → re-assert
+        // Unconditionally re-assert. If the OS rejects the call it fails silently
+        // and we try again next tick (0.5s). No Secure Input guard needed.
         repaintTouchBar()
     }
 
@@ -162,12 +125,16 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         representTimers.forEach { $0.invalidate() }
         representTimers.removeAll()
 
-        let delays = [0.1, 0.3, 0.6, 1.0, 1.5]
+        // Immediately try once — catches fast app switches right away
+        repaintTouchBar()
+
+        // Then staggered retries to outlast slow cold-start animations
+        // (e.g. Raycast cold start: 200–800ms). Watchdog handles anything longer.
+        let delays = [0.15, 0.4, 0.8, 1.2, 1.8]
         for delay in delays {
             let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
                 DispatchQueue.main.async {
-                    guard let self = self, !self.isSecureInputActive() else { return }
-                    self.repaintTouchBar()
+                    self?.repaintTouchBar()
                 }
             }
             timer.tolerance = 0.05
