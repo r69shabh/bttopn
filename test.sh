@@ -3,5 +3,5 @@
 set -e
 cd "$(dirname "$0")"
 TMP_BIN="$(mktemp -d)/bttopn_config_test"
-swiftc -o "$TMP_BIN" Sources/KeyAction.swift Sources/ConfigManager.swift Sources/ClipboardFilter.swift Sources/PaletteFilter.swift Sources/Calculator.swift tests/config_test.swift
+swiftc -o "$TMP_BIN" Sources/KeyAction.swift Sources/ConfigManager.swift Sources/ClipboardFilter.swift tests/config_test.swift
 "$TMP_BIN"

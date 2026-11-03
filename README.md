@@ -34,7 +34,6 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 - 🎛️ **Seamless Control Strip Toggle:** A clean ⌨️ icon sits persistently in your Control Strip. Tap it to slide in your custom keys instantly; tap again to hide them and return to standard macOS actions.
 - ⌨️ **Global Hotkey:** Press `⌃⌥⌘B` anywhere to show/hide your keys — no need to reach for the Control Strip icon.
 - 🖱️ **Interactive GUI Editor:** Built-in native macOS window for managing, **reordering**, and adding new keys or profiles in seconds.
-- 🔍 **Action Palette (⌃⌥⌘Space):** Raycast-lite command palette — **launch any app**, **instant calculator** (`12*45+3` → `= 543`), **paste from clipboard history**, plus **20 built-in actions** (window snaps, media keys, screenshots, Lock Screen, Dark Mode…) and every configured key/app/URL/shell action. MRU ordering floats your most-used to the top. **Works on all Macs, with or without a Touch Bar.**
 - 🔁 **Launch at Login:** Optional menu-bar toggle to start bttopn automatically when you log in.
 - 📋 **Clipboard History:** Menu-bar list of your last 10 copied text snippets — click one to paste it into the frontmost app. **Off by default**, text-only, in-memory only, and concealed pasteboards (password managers) are never stored.
 - 🚀 **Ultra-lightweight:** Compiled natively in Swift. Hides from the Dock/App Switcher, running quietly in the menu bar with `0%` idle CPU usage and < `15MB` RAM footprint.
@@ -54,8 +53,7 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 | **Window Snapping**| ✅ Halves, thirds, maximize, center — via Accessibility API | ✅ Supported |
 | **Per-Key Static Modifiers**| ✅ One-tap `⌘Z`, `⌘⇧4`, … | ✅ Supported |
 | **Clipboard Manager**| ✅ Text history, in-memory, off by default, concealed types excluded | ✅ Supported |
-| **Keyboard-Driven Action Palette**| ✅ Built in — fuzzy-search and run any action from anywhere | ✅ Supported (paid) |
-| **Works Without Touch Bar**| ✅ Action Palette + clipboard history + window snapping | ✅ Supported (paid) |
+| **Works Without Touch Bar**| ✅ Clipboard history + window snapping via menu bar | ✅ Supported (paid) |
 | **Global Hotkey Toggle**| ✅ `⌃⌥⌘B` | ✅ Customizable |
 | **Launch at Login**| ✅ Menu-bar toggle | ✅ Supported |
 | **Raycast/Spotlight Sync**| 🔄 **Auto-Restores Touch Bar instantly** | ⚠️ Requires manual settings tweak |
@@ -92,8 +90,7 @@ To bypass this and achieve system-wide persistence, **bttopn** hooks into Apple'
 3. **App-Switch Interceptor:** Subscribes to `NSWorkspace.didActivateApplicationNotification`. When a launcher like Raycast steals window focus and overrides the Touch Bar, **bttopn** waits `200ms` (for the OS transition to settle) and programmatically re-asserts the system modal overlay. The same path resolves the frontmost app's **per-app profile** and rebuilds the key set when it changes.
 4. **Keystroke Simulation:** Listens to the hardware keyboard's modifier state via `CGEventSource.flagsState(.hidSystemState)` and broadcasts synthetic key-down/key-up sequence events to the frontmost window using `CGEvent.post(tap: .cghidEventTap)`.
 5. **Key Actions:** Each button dispatches through `ActionRunner`: virtual keycodes via the CGEvent path above, media keys via the `systemDefined`/`NX_KEYTYPE_*` event path, window snapping via the Accessibility API (`WindowManager`), and app/URL/shell actions via `NSWorkspace` / `Process`.
-6. **Global Hotkeys:** Carbon `RegisterEventHotKey` bindings (`⌃⌥⌘B` toggle overlay, `⌃⌥⌘Space` action palette) — no Accessibility prompt needed for the hotkeys themselves.
-7. **Action Palette:** A non-activating floating panel (`NSPanel`) that becomes key without activating bttopn. Fuzzy search across: your configured actions, 20 built-in system actions, every installed app (shallow filesystem scan), clipboard history items, and an instant math evaluator (hand-written recursive-descent parser — no `NSExpression`). MRU ordering persisted in UserDefaults.
+6. **Global Hotkey:** A Carbon `RegisterEventHotKey` binding (`⌃⌥⌘B`) toggles the overlay from anywhere — no Accessibility prompt needed for the hotkey itself.
 
 ### System Flow Architecture
 
@@ -130,18 +127,6 @@ You can easily configure your keys through two different methods:
 5. Use the `↑`/`↓` buttons on each row to reorder keys.
 6. Click **Save & Apply** — changes go live instantly.
 
-### Action Palette (newer Macs — no Touch Bar required)
-Press **`⌃⌥⌘Space`** anywhere to open a fast, keyboard-driven palette:
-1. Type a few characters — `calc`, `lock`, `gh`, `snap left`, `12*45+3` — matches are filtered instantly.
-2. `↑`/`↓` to navigate, `↩` to run, `⎋` to close, or just click an entry.
-3. **Every app installed on this Mac** launches from it (fuzzy name match — the reason to use any palette).
-4. **Instant calculator** — type any sum; `= 543` appears at the top, ↩ copies the result.
-5. **Clipboard items** (when Clipboard History is enabled) are pasteable straight from the palette — ↩ pastes the item into the app you were using.
-6. Ships with **20 built-in system actions** (window snapping, media keys, screenshots, Lock Screen, Force Quit, Sleep Display, Dark Mode) plus everything you've configured — default keys and per-app profiles (each entry shows its scope, e.g. `Raycast · Key Press`).
-7. **MRU ordering** — the actions you run most float to the top (stored locally, never synced).
-8. Keystroke actions fire into the app you were using — bttopn never steals frontmost focus.
-9. Empty palette shows your recent + configured + built-in actions; apps and clipboard items appear once you start typing.
-
 ### Clipboard History
 1. Click the `⌨️` icon in your macOS top **Menu Bar** → **Clipboard History** → **Enabled**.
 2. Copy text as usual. Open the same menu to see your last 10 snippets.
@@ -152,7 +137,6 @@ Press **`⌃⌥⌘Space`** anywhere to open a fast, keyboard-driven palette:
 
 ### Quick Global Shortcuts
 - **`⌃⌥⌘B`** — show/hide your Touch Bar keys overlay
-- **`⌃⌥⌘Space`** — open the Action Palette
 
 ### Method B: Manual JSON File Editing
 If you prefer configuring via code or want to backup your settings, the configuration is stored in a clean JSON format (schema v2):

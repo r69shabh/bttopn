@@ -121,44 +121,6 @@ struct ConfigTest {
                                              text: String(repeating: "x", count: ClipboardFilter.maxTextLength + 1)),
               "clipboard: oversized blob rejected")
 
-        // 6. Palette filter: empty query matches all; tokens AND substring
-        check(PaletteFilter.matches("", in: "anything at all"), "palette: empty query matches")
-        check(PaletteFilter.matches("undo", in: "Undo · Default · Key Press"), "palette: single token substring")
-        check(PaletteFilter.matches("cmd undo", in: "Undo — cmd · Default · Key Press"), "palette: multi-token AND")
-        check(!PaletteFilter.matches("xyz", in: "Undo · Default · Key Press"), "palette: non-matching token rejected")
-        check(PaletteFilter.matches("RAYCAST", in: "↩ · raycast · Key Press"), "palette: case-insensitive")
-
-        // 7. MRU ordering: hits float to front in MRU order, rest unchanged
-        let mruItems = ["a", "b", "c", "d"]
-        check(PaletteMRU.ordered(mruItems, mru: ["c"], id: { $0 }) == ["c", "a", "b", "d"],
-              "mru: hit floats to front")
-        check(PaletteMRU.ordered(mruItems, mru: ["d", "b"], id: { $0 }) == ["d", "b", "a", "c"],
-              "mru: hits keep mru order")
-        check(PaletteMRU.ordered(mruItems, mru: [], id: { $0 }) == mruItems,
-              "mru: empty mru is identity")
-        check(PaletteMRU.ordered(mruItems, mru: ["zz"], id: { $0 }) == mruItems,
-              "mru: unknown ids ignored")
-        check(PaletteMRU.ordered(mruItems, mru: ["a", "a"], id: { $0 }) == mruItems,
-              "mru: duplicate ids ignored")
-
-        // 8. Calculator: arithmetic, parens, unary minus, error safety
-        func calc(_ s: String) -> Double? { Calculator.eval(s) }
-        check(calc("12*45+3") == 543, "calc: precedence")
-        check(calc("2+3*4") == 14, "calc: mul before add")
-        check(calc("(2+3)*4") == 20, "calc: parentheses")
-        check(calc("-5+3") == -2, "calc: unary minus")
-        check(calc("10/4") == 2.5, "calc: division")
-        check(calc("--3") == 3, "calc: double negation")
-        check(calc("5 + 7 - 2") == 10, "calc: whitespace tolerated")
-        check(calc("1/0") == nil, "calc: divide by zero rejected")
-        check(calc("5+") == nil, "calc: trailing operator rejected")
-        check(calc("abc") == nil, "calc: letters rejected")
-        check(calc("") == nil, "calc: empty rejected")
-        check(calc("((") == nil, "calc: unbalanced parens rejected")
-        check(calc("5; rm -rf /") == nil, "calc: injection rejected")
-        check(Calculator.format(543) == "543", "calc: format integer")
-        check(Calculator.format(2.5) == "2.5", "calc: format decimal")
-
         if failures > 0 {
             print("\n\(failures) test(s) failed")
             exit(1)
