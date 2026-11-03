@@ -11,6 +11,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Menu items that need state updates
     private var toggleMenuItem: NSMenuItem!
     private var launchAtLoginMenuItem: NSMenuItem!
+    private var clipboardMenuItem: NSMenuItem!
+    private var clipboardSubmenu: NSMenu!
 
     // Held for the lifetime of the app to tell macOS this process performs
     // user-initiated work. This enables correct App Nap classification while
@@ -122,6 +124,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         launchAtLoginMenuItem.target = self
         menu.addItem(launchAtLoginMenuItem)
 
+        clipboardMenuItem = NSMenuItem(title: "Clipboard History", action: nil, keyEquivalent: "")
+        clipboardSubmenu = NSMenu(title: "Clipboard History")
+        clipboardMenuItem.submenu = clipboardSubmenu
+        menu.addItem(clipboardMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(title: "Quit bttopn", action: #selector(quitApp), keyEquivalent: "q")
@@ -130,6 +137,70 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusItem.menu = menu
         updateLaunchAtLoginMenuState()
+
+        ClipboardHistory.shared.onChange = { [weak self] in
+            self?.rebuildClipboardMenu()
+        }
+        if ClipboardHistory.shared.isEnabled {
+            ClipboardHistory.shared.start()
+        }
+        rebuildClipboardMenu()
+    }
+
+    // MARK: - Clipboard History
+
+    private func rebuildClipboardMenu() {
+        clipboardSubmenu.removeAllItems()
+
+        let enabled = ClipboardHistory.shared.isEnabled
+        let toggle = NSMenuItem(title: "Enabled", action: #selector(toggleClipboardHistory), keyEquivalent: "")
+        toggle.target = self
+        toggle.state = enabled ? .on : .off
+        toggle.toolTip = "Text-only, in-memory history. Concealed clipboards (password managers) are never stored."
+        clipboardSubmenu.addItem(toggle)
+        clipboardSubmenu.addItem(NSMenuItem.separator())
+
+        guard enabled else { return }
+
+        let items = ClipboardHistory.shared.items
+        if items.isEmpty {
+            let empty = NSMenuItem(title: "(empty)", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            clipboardSubmenu.addItem(empty)
+        } else {
+            for (index, text) in items.prefix(10).enumerated() {
+                let item = NSMenuItem(title: "\(index + 1). \(ClipboardHistory.preview(text))",
+                                      action: #selector(pasteClipboardItem(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = text
+                clipboardSubmenu.addItem(item)
+            }
+        }
+
+        clipboardSubmenu.addItem(NSMenuItem.separator())
+        let clear = NSMenuItem(title: "Clear History", action: #selector(clearClipboardHistory), keyEquivalent: "")
+        clear.target = self
+        clear.isEnabled = !items.isEmpty
+        clipboardSubmenu.addItem(clear)
+    }
+
+    @objc private func toggleClipboardHistory() {
+        ClipboardHistory.shared.setEnabled(!ClipboardHistory.shared.isEnabled)
+        rebuildClipboardMenu()
+    }
+
+    @objc private func clearClipboardHistory() {
+        ClipboardHistory.shared.clear()
+    }
+
+    @objc private func pasteClipboardItem(_ sender: NSMenuItem) {
+        guard let text = sender.representedObject as? String else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        usleep(50_000) // give the pasteboard a moment to propagate before ⌘V
+        KeySimulator.simulateKeyPress(keyCode: 0x09, modifiers: ["cmd"]) // ⌘V into the frontmost app
     }
 
     // MARK: - Launch at Login
@@ -186,6 +257,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quitApp() {
         HotKeyManager.shared.unregister()
+        ClipboardHistory.shared.stop()
         touchBarManager.dismissTouchBar()
         // End background activity assertion cleanly on quit
         if let activity = backgroundActivity {
