@@ -128,6 +128,19 @@ struct ConfigTest {
         check(!PaletteFilter.matches("xyz", in: "Undo · Default · Key Press"), "palette: non-matching token rejected")
         check(PaletteFilter.matches("RAYCAST", in: "↩ · raycast · Key Press"), "palette: case-insensitive")
 
+        // 7. MRU ordering: hits float to front in MRU order, rest unchanged
+        let mruItems = ["a", "b", "c", "d"]
+        check(PaletteMRU.ordered(mruItems, mru: ["c"], id: { $0 }) == ["c", "a", "b", "d"],
+              "mru: hit floats to front")
+        check(PaletteMRU.ordered(mruItems, mru: ["d", "b"], id: { $0 }) == ["d", "b", "a", "c"],
+              "mru: hits keep mru order")
+        check(PaletteMRU.ordered(mruItems, mru: [], id: { $0 }) == mruItems,
+              "mru: empty mru is identity")
+        check(PaletteMRU.ordered(mruItems, mru: ["zz"], id: { $0 }) == mruItems,
+              "mru: unknown ids ignored")
+        check(PaletteMRU.ordered(mruItems, mru: ["a", "a"], id: { $0 }) == mruItems,
+              "mru: duplicate ids ignored")
+
         if failures > 0 {
             print("\n\(failures) test(s) failed")
             exit(1)

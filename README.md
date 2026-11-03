@@ -34,7 +34,7 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 - 🎛️ **Seamless Control Strip Toggle:** A clean ⌨️ icon sits persistently in your Control Strip. Tap it to slide in your custom keys instantly; tap again to hide them and return to standard macOS actions.
 - ⌨️ **Global Hotkey:** Press `⌃⌥⌘B` anywhere to show/hide your keys — no need to reach for the Control Strip icon.
 - 🖱️ **Interactive GUI Editor:** Built-in native macOS window for managing, **reordering**, and adding new keys or profiles in seconds.
-- 🔍 **Action Palette (⌃⌥⌘Space):** Raycast-style, keyboard-driven command palette. Type to fuzzy-search every configured key, app-launcher, URL opener, shell command, media key and window snap — across default and per-app profiles. **Works on all Macs, with or without a Touch Bar.**
+- 🔍 **Action Palette (⌃⌥⌘Space):** Raycast-style command palette — type to fuzzy-search **20 built-in actions** (window snaps, media keys, screenshots, Lock Screen, Dark Mode…) plus every configured key/app/URL/shell action. MRU ordering floats your most-used actions to the top. **Works on all Macs, with or without a Touch Bar.**
 - 🔁 **Launch at Login:** Optional menu-bar toggle to start bttopn automatically when you log in.
 - 📋 **Clipboard History:** Menu-bar list of your last 10 copied text snippets — click one to paste it into the frontmost app. **Off by default**, text-only, in-memory only, and concealed pasteboards (password managers) are never stored.
 - 🚀 **Ultra-lightweight:** Compiled natively in Swift. Hides from the Dock/App Switcher, running quietly in the menu bar with `0%` idle CPU usage and < `15MB` RAM footprint.
@@ -132,10 +132,12 @@ You can easily configure your keys through two different methods:
 
 ### Action Palette (newer Macs — no Touch Bar required)
 Press **`⌃⌥⌘Space`** anywhere to open a fast, keyboard-driven palette:
-1. Type a few characters — e.g. `undo`, `gh`, `left ½` — and matching actions are filtered instantly.
+1. Type a few characters — e.g. `lock`, `snap`, `dark`, `mute`, `undo` — and matching actions are filtered instantly.
 2. `↑`/`↓` to navigate, `↩` to run, `⎋` to close, or just click an entry.
-3. Every action you've configured is included: default keys and all per-app profiles (each entry shows its scope, e.g. `Raycast · Key Press`).
-4. Keystroke actions fire into the app you were using — bttopn never steals frontmost focus.
+3. Ships with **20 built-in system actions** (window snapping, media keys, screenshots, Lock Screen, Force Quit, Sleep Display, Dark Mode) — useful out of the box, zero configuration.
+4. Plus everything you've configured: default keys and all per-app profiles (each entry shows its scope, e.g. `Raycast · Key Press`).
+5. **MRU ordering** — the actions you run most float to the top (stored locally, never synced).
+6. Keystroke actions fire into the app you were using — bttopn never steals frontmost focus.
 
 ### Clipboard History
 1. Click the `⌨️` icon in your macOS top **Menu Bar** → **Clipboard History** → **Enabled**.

@@ -14,9 +14,11 @@ import Cocoa
 //   - Clicking outside closes the palette (windowDidResignKey).
 
 struct PaletteEntry {
+    /// Stable id for MRU ordering, e.g. "Default|key|6|cmd|Undo" or "window-left-half".
+    let id: String
     let title: String
     let detail: String
-    let mapping: KeyMapping
+    let run: () -> Void
 }
 
 final class PalettePanel: NSPanel {
@@ -80,6 +82,26 @@ final class ActionPalette: NSObject {
 
     // MARK: - Entries
 
+    private static let mruKey = "paletteMRU"
+    private static let mruLimit = 20
+
+    private func loadMRU() -> [String] {
+        UserDefaults.standard.stringArray(forKey: Self.mruKey) ?? []
+    }
+
+    private func recordRun(id: String) {
+        var mru = loadMRU()
+        mru.removeAll { $0 == id }
+        mru.insert(id, at: 0)
+        if mru.count > Self.mruLimit { mru.removeLast(mru.count - Self.mruLimit) }
+        UserDefaults.standard.set(mru, forKey: Self.mruKey)
+    }
+
+    private static func entryID(scope: String, _ m: KeyMapping) -> String {
+        [scope, m.action.rawValue, String(m.keyCode), m.value ?? "",
+         (m.modifiers ?? []).joined(separator: "+"), m.label].joined(separator: "|")
+    }
+
     private func buildEntries() -> [PaletteEntry] {
         var out: [PaletteEntry] = []
         func append(_ mapping: KeyMapping, scope: String) {
@@ -90,16 +112,26 @@ final class ActionPalette: NSObject {
             if let modifiers = mapping.modifiers, !modifiers.isEmpty {
                 parts.append(modifiers.joined(separator: "+"))
             }
-            out.append(PaletteEntry(title: mapping.label,
-                                    detail: parts.joined(separator: " · "),
-                                    mapping: mapping))
+            out.append(PaletteEntry(id: Self.entryID(scope: scope, mapping),
+                                    title: mapping.label,
+                                    detail: parts.joined(separator: " · ")) {
+                ActionRunner.run(mapping)
+            })
         }
         for mapping in configManager.config.keys { append(mapping, scope: "Default") }
         for profile in configManager.config.profiles {
             for mapping in profile.keys { append(mapping, scope: profile.name) }
         }
-        // Dedupe identical (label, detail) pairs (e.g. same key in two profiles is NOT deduped — scope differs)
-        return out
+        // Built-in system actions — palette is useful out of the box,
+        // even with zero keys configured
+        for builtin in SystemActions.all {
+            out.append(PaletteEntry(id: builtin.id,
+                                    title: builtin.title,
+                                    detail: builtin.detail,
+                                    run: builtin.run))
+        }
+        // MRU: what you run most floats to the top
+        return PaletteMRU.ordered(out, mru: loadMRU(), id: { $0.id })
     }
 
     private func applyFilter() {
@@ -138,8 +170,9 @@ final class ActionPalette: NSObject {
     }
 
     private func run(_ entry: PaletteEntry) {
+        recordRun(id: entry.id)
         hide()
-        ActionRunner.run(entry.mapping)
+        entry.run()
     }
 
     // MARK: - Key monitor
