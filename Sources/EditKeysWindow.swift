@@ -322,7 +322,7 @@ class EditKeysWindowController: NSWindowController {
         actionPopup.widthAnchor.constraint(equalToConstant: 120).isActive = true
 
         let parameterHolder = NSView()
-        parameterHolder.widthAnchor.constraint(equalToConstant: 230).isActive = true
+        parameterHolder.widthAnchor.constraint(equalToConstant: 250).isActive = true
         parameterHolder.heightAnchor.constraint(equalToConstant: 26).isActive = true
 
         let deleteBtn = NSButton(title: "✕", target: self, action: #selector(deleteRow(_:)))
@@ -336,7 +336,7 @@ class EditKeysWindowController: NSWindowController {
         let keyRow = KeyRow(container: row, upButton: upButton, downButton: downButton,
                             labelField: labelField, actionPopup: actionPopup,
                             parameterHolder: parameterHolder, deleteButton: deleteBtn)
-        swapParameterView(for: keyRow, with: mapping.action, currentValue: mapping.value, keyCode: mapping.keyCode)
+        swapParameterView(for: keyRow, with: mapping.action, currentValue: mapping.value, keyCode: mapping.keyCode, modifiers: mapping.modifiers)
 
         stackView.addArrangedSubview(row)
         keyRows.append(keyRow)
@@ -380,7 +380,7 @@ class EditKeysWindowController: NSWindowController {
         }
     }
 
-    private func swapParameterView(for row: KeyRow, with action: KeyAction, currentValue: String?, keyCode: Int) {
+    private func swapParameterView(for row: KeyRow, with action: KeyAction, currentValue: String?, keyCode: Int, modifiers: [String]? = nil) {
         if row.parameterView != nil {
             row.parameterHolder.subviews.forEach { $0.removeFromSuperview() }
         }
@@ -388,15 +388,36 @@ class EditKeysWindowController: NSWindowController {
         let view: NSView
         switch action {
         case .key:
+            let container = NSStackView()
+            container.orientation = .horizontal
+            container.spacing = 4
+
             let popup = NSPopUpButton()
+            popup.tag = 7001
+            popup.widthAnchor.constraint(equalToConstant: 108).isActive = true
             populatePopup(popup)
             if popup.menu?.items.contains(where: { $0.tag == keyCode + tagOffset }) == true {
                 popup.selectItem(withTag: keyCode + tagOffset)
             } else {
                 popup.selectItem(withTag: 0x31 + tagOffset)
             }
-            popup.frame = row.parameterHolder.bounds
-            view = popup
+            container.addArrangedSubview(popup)
+
+            // One-tap static modifiers: ⌘ ⇧ ⌥ ⌃ (unioned with physically held keys)
+            let modifierDefs: [(glyph: String, name: String)] = [("⌘", "cmd"), ("⇧", "shift"), ("⌥", "option"), ("⌃", "control")]
+            for (index, def) in modifierDefs.enumerated() {
+                let toggle = NSButton(title: def.glyph, target: nil, action: nil)
+                toggle.setButtonType(.pushOnPushOff)
+                toggle.bezelStyle = .rounded
+                toggle.controlSize = .small
+                toggle.font = .systemFont(ofSize: 13, weight: .semibold)
+                toggle.tag = 7100 + index
+                toggle.state = (modifiers ?? []).contains(def.name) ? .on : .off
+                toggle.toolTip = "Hold \(def.name) when this key fires"
+                toggle.widthAnchor.constraint(equalToConstant: 26).isActive = true
+                container.addArrangedSubview(toggle)
+            }
+            view = container
 
         case .mediaKey:
             let popup = NSPopUpButton()
@@ -532,12 +553,20 @@ class EditKeysWindowController: NSWindowController {
 
             var keyCode = 0
             var value: String? = nil
+            var modifiers: [String]? = nil
 
             switch action {
             case .key:
-                if let popup = row.parameterView as? NSPopUpButton {
-                    keyCode = (popup.selectedItem?.tag ?? (0x31 + tagOffset)) - tagOffset
-                    if keyCode < 0 { keyCode = 0x31 }
+                if let container = row.parameterView as? NSStackView {
+                    if let popup = container.viewWithTag(7001) as? NSPopUpButton {
+                        keyCode = (popup.selectedItem?.tag ?? (0x31 + tagOffset)) - tagOffset
+                        if keyCode < 0 { keyCode = 0x31 }
+                    }
+                    let modNames = ["cmd", "shift", "option", "control"]
+                    let picked = modNames.enumerated()
+                        .filter { (container.viewWithTag(7100 + $0.offset) as? NSButton)?.state == .on }
+                        .map { $0.element }
+                    modifiers = picked.isEmpty ? nil : picked
                 }
             case .mediaKey:
                 if let popup = row.parameterView as? NSPopUpButton,
@@ -562,7 +591,7 @@ class EditKeysWindowController: NSWindowController {
             }
 
             let finalLabel = label.isEmpty ? emptyLabelFallback(action: action, value: value, keyCode: keyCode) : label
-            mappings.append(KeyMapping(label: finalLabel, keyCode: keyCode, action: action, value: value))
+            mappings.append(KeyMapping(label: finalLabel, keyCode: keyCode, action: action, value: value, modifiers: modifiers))
         }
 
         if let index = currentProfileIndex, workingConfig.profiles.indices.contains(index) {

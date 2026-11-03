@@ -7,7 +7,8 @@ enum ActionRunner {
     static func run(_ mapping: KeyMapping) {
         switch mapping.action {
         case .key:
-            KeySimulator.simulateKeyPress(keyCode: CGKeyCode(mapping.keyCode))
+            KeySimulator.simulateKeyPress(keyCode: CGKeyCode(mapping.keyCode),
+                                           modifiers: mapping.modifiers ?? [])
         case .mediaKey:
             KeySimulator.simulateMediaKey(mapping.value ?? "")
         case .launchApp:

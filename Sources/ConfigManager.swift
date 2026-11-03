@@ -11,15 +11,19 @@ struct KeyMapping: Codable, Equatable {
     var keyCode: Int
     var action: KeyAction
     var value: String?
+    /// Static modifiers held while this key fires, e.g. ["cmd", "shift"].
+    /// Combined with any physically held modifiers at trigger time.
+    var modifiers: [String]?
 
-    init(label: String, keyCode: Int, action: KeyAction = .key, value: String? = nil) {
+    init(label: String, keyCode: Int, action: KeyAction = .key, value: String? = nil, modifiers: [String]? = nil) {
         self.label = label
         self.keyCode = keyCode
         self.action = action
         self.value = value
+        self.modifiers = modifiers
     }
 
-    enum CodingKeys: String, CodingKey { case label, keyCode, action, value }
+    enum CodingKeys: String, CodingKey { case label, keyCode, action, value, modifiers }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -27,6 +31,7 @@ struct KeyMapping: Codable, Equatable {
         keyCode = try c.decodeIfPresent(Int.self, forKey: .keyCode) ?? 0
         action = try c.decodeIfPresent(KeyAction.self, forKey: .action) ?? .key
         value = try c.decodeIfPresent(String.self, forKey: .value)
+        modifiers = try c.decodeIfPresent([String].self, forKey: .modifiers)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -35,6 +40,7 @@ struct KeyMapping: Codable, Equatable {
         try c.encode(keyCode, forKey: .keyCode)
         try c.encode(action, forKey: .action)
         try c.encodeIfPresent(value, forKey: .value)
+        try c.encodeIfPresent(modifiers, forKey: .modifiers)
     }
 }
 

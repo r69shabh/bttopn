@@ -30,6 +30,7 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 - 🗂️ **Per-App Profiles:** Define different Touch Bar layouts for different apps (e.g. Raycast, Terminal, VS Code). bttopn swaps them automatically as you switch apps.
 - 🔄 **Persistent Auto-Restore:** Automatically detects frontmost application switches. If you invoke **Raycast, Spotlight, Alfred**, or any launcher, **bttopn** keeps your custom keys active and visible without interruptions.
 - ⌨️ **Physical Modifier State Sync:** Fully recognizes held physical modifier keys (`Cmd`, `Shift`, `Opt`, `Control`). Hold physical `Cmd` and tap your Touch Bar `Z` key to trigger `Cmd + Z`.
+- ⌘ **One-Tap Shortcuts:** Any key can carry **static modifiers** (`⌘⇧⌥⌃`) — tap once to send `Cmd + Z` to undo, no need to hold anything. Unioned with whatever you're physically holding.
 - 🎛️ **Seamless Control Strip Toggle:** A clean ⌨️ icon sits persistently in your Control Strip. Tap it to slide in your custom keys instantly; tap again to hide them and return to standard macOS actions.
 - ⌨️ **Global Hotkey:** Press `⌃⌥⌘B` anywhere to show/hide your keys — no need to reach for the Control Strip icon.
 - 🖱️ **Interactive GUI Editor:** Built-in native macOS window for managing, **reordering**, and adding new keys or profiles in seconds.
@@ -49,6 +50,7 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 | **Per-App Touch Bar Layouts**| ✅ **Per-app profiles, swapped automatically** | ✅ Supported |
 | **Key Actions**| ✅ Keystrokes, media keys, launch apps, open URLs, shell commands, window snapping | ✅ Supported |
 | **Window Snapping**| ✅ Halves, thirds, maximize, center — via Accessibility API | ✅ Supported |
+| **Per-Key Static Modifiers**| ✅ One-tap `⌘Z`, `⌘⇧4`, … | ✅ Supported |
 | **Global Hotkey Toggle**| ✅ `⌃⌥⌘B` | ✅ Customizable |
 | **Launch at Login**| ✅ Menu-bar toggle | ✅ Supported |
 | **Raycast/Spotlight Sync**| 🔄 **Auto-Restores Touch Bar instantly** | ⚠️ Requires manual settings tweak |
@@ -134,7 +136,9 @@ If you prefer configuring via code or want to backup your settings, the configur
     { "label": "Calc", "keyCode": 0, "action": "launchApp", "value": "com.apple.Calculator" },
     { "label": "GitHub", "keyCode": 0, "action": "openURL", "value": "https://github.com" },
     { "label": "🧹",   "keyCode": 0, "action": "shell",    "value": "rm -rf ~/Downloads/tmp_*" },
-    { "label": "Left ½", "keyCode": 0, "action": "windowSnap", "value": "Left Half" }
+    { "label": "Left ½", "keyCode": 0, "action": "windowSnap", "value": "Left Half" },
+    { "label": "Undo", "keyCode": 6, "modifiers": ["cmd"] },
+    { "label": "Screenshot", "keyCode": 21, "modifiers": ["cmd", "shift"] }
   ],
   "profiles": [
     {
@@ -156,6 +160,7 @@ If you prefer configuring via code or want to backup your settings, the configur
 - `windowSnap` values: `Left Half`, `Right Half`, `Left Third`, `Right Third`, `Maximize`, `Center` — snaps the frontmost window via the Accessibility API.
 - `launchApp` takes a bundle identifier (e.g. `com.apple.Calculator`). If the app is already running it is activated instead of relaunched.
 - `shell` commands run via `/bin/sh -c` in the background.
+- `modifiers` on any `key` action holds those modifiers while the key fires — valid values: `cmd`, `shift`, `option`, `control`. Unioned with physically held modifiers.
 *(Tip: Refer to `Sources/KeyCodes.swift` for a comprehensive list of standard macOS virtual keycodes).*
 
 ---

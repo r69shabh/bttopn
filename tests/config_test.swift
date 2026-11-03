@@ -34,6 +34,7 @@ struct ConfigTest {
             check(config.keys[0].action == .key, "legacy: action defaults to .key")
             check(config.keys[0].keyCode == 25, "legacy: keyCode preserved")
             check(config.keys[0].value == nil, "legacy: value defaults to nil")
+            check(config.keys[0].modifiers == nil, "legacy: modifiers default to nil")
             check(config.profiles.isEmpty, "legacy: profiles default to empty")
         } catch {
             failures += 1
@@ -48,6 +49,8 @@ struct ConfigTest {
             KeyMapping(label: "GitHub", keyCode: 0, action: .openURL, value: "https://github.com"),
             KeyMapping(label: "🍺", keyCode: 0, action: .shell, value: "echo hi"),
             KeyMapping(label: "Left ½", keyCode: 0, action: .windowSnap, value: "Left Half"),
+            KeyMapping(label: "Undo", keyCode: 0x06, modifiers: ["cmd"]),
+            KeyMapping(label: "Paste", keyCode: 0x09, modifiers: ["cmd", "shift"]),
         ], profiles: [
             AppProfile(bundleID: "com.raycast.macos", name: "Raycast",
                        keys: [KeyMapping(label: "Enter", keyCode: 0x24)]),

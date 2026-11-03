@@ -4,13 +4,23 @@ import Cocoa
 /// Reads current modifier state so physical Cmd/Shift/etc. work with Touch Bar buttons.
 enum KeySimulator {
 
+    /// Mapping from config modifier names to CGEventFlags.
+    static let modifierFlags: [String: CGEventFlags] = [
+        "cmd": .maskCommand, "shift": .maskShift, "option": .maskAlternate, "control": .maskControl,
+    ]
+
     /// Simulate a single key press (down + up) for the given virtual key code.
-    /// Automatically includes any currently-held physical modifier keys.
-    static func simulateKeyPress(keyCode: CGKeyCode) {
+    /// Combines physically-held modifier keys with any static `modifiers`
+    /// from the mapping (e.g. per-key "always Cmd" for one-tap undo).
+    static func simulateKeyPress(keyCode: CGKeyCode, modifiers: [String] = []) {
         let source = CGEventSource(stateID: .hidSystemState)
 
-        // Read the current physical modifier state (Shift, Cmd, Option, Control)
-        let currentFlags = CGEventSource.flagsState(.hidSystemState)
+        // Physically held modifiers, unioned with the mapping's static ones
+        var flags = CGEventSource.flagsState(.hidSystemState)
+        for name in modifiers {
+            if let mask = modifierFlags[name] { flags.insert(mask) }
+        }
+        let currentFlags = flags
 
         // Key Down
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true) else {
