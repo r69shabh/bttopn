@@ -37,7 +37,9 @@ swiftc \
     Sources/MediaKeys.swift \
     Sources/WindowManager.swift \
     Sources/ClipboardFilter.swift \
-    Sources/ClipboardHistory.swift
+    Sources/ClipboardHistory.swift \
+    Sources/PaletteFilter.swift \
+    Sources/ActionPalette.swift
 
 # Compile Swift sources for Intel (x86_64)
 swiftc \
@@ -62,7 +64,9 @@ swiftc \
     Sources/MediaKeys.swift \
     Sources/WindowManager.swift \
     Sources/ClipboardFilter.swift \
-    Sources/ClipboardHistory.swift
+    Sources/ClipboardHistory.swift \
+    Sources/PaletteFilter.swift \
+    Sources/ActionPalette.swift
 
 # Create Universal Binary
 lipo -create -output "$APP_BUNDLE/Contents/MacOS/$APP_NAME" \
@@ -74,8 +78,20 @@ rm "$BUILD_DIR/${APP_NAME}_arm64" "$BUILD_DIR/${APP_NAME}_x86_64"
 # Copy Info.plist
 cp Resources/Info.plist "$APP_BUNDLE/Contents/"
 
-# Ad-hoc code sign
-codesign --force --sign - "$APP_BUNDLE"
+# Stable local signing: a self-signed cert in the login keychain gives every
+# build the same designated requirement (certificate leaf), so macOS keeps the
+# Accessibility / TCC grants across reinstalls. Falling back to ad-hoc makes
+# TCC see a new app each build and the user must re-grant every time.
+SIGN_ID="bttopn Local Signing"
+if security find-certificate -c "$SIGN_ID" >/dev/null 2>&1; then
+    codesign --force --sign "$SIGN_ID" "$APP_BUNDLE"
+    echo "🔏 Signed with '$SIGN_ID' (TCC grants persist across rebuilds)"
+else
+    codesign --force --sign - "$APP_BUNDLE"
+    echo "⚠️  '$SIGN_ID' not found in keychain — signed ad-hoc;"
+    echo "    Accessibility will need re-granting after each reinstall."
+    echo "    See README → Local Compilation for how to create it."
+fi
 
 echo ""
 echo "✅ Built: $APP_BUNDLE"

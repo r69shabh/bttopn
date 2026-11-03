@@ -121,6 +121,13 @@ struct ConfigTest {
                                              text: String(repeating: "x", count: ClipboardFilter.maxTextLength + 1)),
               "clipboard: oversized blob rejected")
 
+        // 6. Palette filter: empty query matches all; tokens AND substring
+        check(PaletteFilter.matches("", in: "anything at all"), "palette: empty query matches")
+        check(PaletteFilter.matches("undo", in: "Undo · Default · Key Press"), "palette: single token substring")
+        check(PaletteFilter.matches("cmd undo", in: "Undo — cmd · Default · Key Press"), "palette: multi-token AND")
+        check(!PaletteFilter.matches("xyz", in: "Undo · Default · Key Press"), "palette: non-matching token rejected")
+        check(PaletteFilter.matches("RAYCAST", in: "↩ · raycast · Key Press"), "palette: case-insensitive")
+
         if failures > 0 {
             print("\n\(failures) test(s) failed")
             exit(1)

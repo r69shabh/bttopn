@@ -1,11 +1,13 @@
 import Cocoa
 import ServiceManagement
+import Carbon
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem!
     private var configManager: ConfigManager!
     private var touchBarManager: TouchBarManager!
+    private var actionPalette: ActionPalette!
     private var editWindowController: EditKeysWindowController?
 
     // Menu items that need state updates
@@ -33,6 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 2. Initialize managers
         configManager = ConfigManager()
+        actionPalette = ActionPalette(configManager: configManager)
         touchBarManager = TouchBarManager(configManager: configManager)
 
         // Rebuild touch bar on config changes
@@ -59,11 +62,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 name: NSWorkspace.didWakeNotification,
                                 object: nil)
 
-        // 6. Global hotkey ⌃⌥⌘B toggles the keys overlay from anywhere.
-        HotKeyManager.shared.onToggle = { [weak self] in
+        // 6. Global hotkeys: ⌃⌥⌘B toggles the Touch Bar keys overlay,
+        //    ⌃⌥⌘Space opens the Action Palette (works on ALL Macs).
+        HotKeyManager.shared.register(id: 1,
+                                      keyCode: UInt32(kVK_ANSI_B),
+                                      modifiers: UInt32(cmdKey | optionKey | controlKey)) { [weak self] in
             self?.toggleTouchBar()
         }
-        HotKeyManager.shared.register()
+        HotKeyManager.shared.register(id: 2,
+                                      keyCode: UInt32(kVK_Space),
+                                      modifiers: UInt32(cmdKey | optionKey | controlKey)) { [weak self] in
+            self?.actionPalette.toggle()
+        }
 
         // 7. Declare this process as user-initiated work that allows idle system
         //    sleep. This gives the OS accurate information for App Nap decisions
@@ -107,6 +117,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(toggleMenuItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        let paletteItem = NSMenuItem(title: "Action Palette…", action: #selector(toggleActionPalette), keyEquivalent: "")
+        paletteItem.target = self
+        paletteItem.toolTip = "Global shortcut: ⌃⌥⌘Space"
+        menu.addItem(paletteItem)
 
         let editItem = NSMenuItem(title: "Edit Keys…", action: #selector(openEditWindow), keyEquivalent: "e")
         editItem.target = self
@@ -236,6 +251,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         toggleMenuItem.title = touchBarManager.keysVisible ? "Hide Keys" : "Show Keys"
     }
 
+    @objc private func toggleActionPalette() {
+        actionPalette.toggle()
+    }
+
     @objc private func openEditWindow() {
         if editWindowController == nil {
             editWindowController = EditKeysWindowController(configManager: configManager) { [weak self] in
@@ -256,7 +275,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quitApp() {
-        HotKeyManager.shared.unregister()
+        HotKeyManager.shared.unregisterAll()
         ClipboardHistory.shared.stop()
         touchBarManager.dismissTouchBar()
         // End background activity assertion cleanly on quit

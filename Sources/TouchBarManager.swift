@@ -30,10 +30,19 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     // Watchdog: a low-frequency repeating timer that re-asserts the Touch Bar
     // after Secure Input is released (password fields, Wi-Fi prompts, Raycast
-    // search box, etc.). Runs every 2 seconds while keysVisible == true.
+    // search box, etc.). Runs every 0.5 seconds while keysVisible == true.
     // This is the definitive fix for cases where the OS silently blocks our
     // presentSystemModalTouchBar calls while Secure Input is held.
     private var watchdogTimer: Timer?
+
+    // Anti-flicker state. Every presentSystemModalTouchBar makes ALL Control
+    // Strip icons (camera, volume, brightness…) re-layout, and every
+    // destroy/rebuild cycle re-registers our tray item. We therefore rate-
+    // limit presents and back off exponentially while the OS refuses to show
+    // the bar — same guarantee (keys come back), without the strobe.
+    private var lastPresentAttempt = Date.distantPast
+    private var reassertFailures = 0
+    private var controlStripPresenceSet = false
 
     // Tracks whether the system is currently asleep.
     // All observer callbacks and timer scheduling are suppressed during sleep
@@ -86,17 +95,26 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         guard keysVisible, !isSleeping else { return }
         // Only act if the Touch Bar is currently hidden — no-op if already visible
         guard let tb = touchBar, !tb.isVisible else { return }
-        
-        // Touch Bar is hidden despite our staggered repaint attempts.
-        // macOS is likely ignoring the `present` call on the stale instance 
-        // (common when Raycast or Spotlight overlays the UI).
-        // We must completely dismiss and rebuild it to force macOS to show it.
-        touchBarObserver?.invalidate()
-        touchBarObserver = nil
-        NSTouchBar.dismissSystemModalTouchBar(tb)
-        self.touchBar = nil
-        
-        repaintTouchBar()
+
+        // Exponential backoff: 0.5s, 1s, 2s, … capped at 4s.
+        // Each present re-lays-out the whole Control Strip; hammering it
+        // makes every other strip icon flicker for as long as the OS keeps
+        // hiding our bar (e.g. during a slow app launch).
+        reassertFailures += 1
+        let backoff = min(0.5 * pow(2.0, Double(reassertFailures - 1)), 4.0)
+        guard Date().timeIntervalSince(lastPresentAttempt) >= backoff else { return }
+
+        // The OS is ignoring the stale instance (common when Raycast or
+        // Spotlight overlays the UI). Only rebuild it after several failed
+        // re-asserts — rebuilding on every tick is what caused the flicker.
+        if reassertFailures >= 4 {
+            touchBarObserver?.invalidate()
+            touchBarObserver = nil
+            NSTouchBar.dismissSystemModalTouchBar(tb)
+            self.touchBar = nil
+        }
+
+        repaintTouchBar(force: true)
     }
 
     // MARK: - App-Switch Observer
@@ -176,8 +194,13 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         // like Raycast that don't send NSWorkspace.didActivateApplicationNotification.
         self.touchBarObserver = tb.observe(\.isVisible, options: [.new]) { [weak self] _, change in
             guard let self = self, !self.isSleeping, self.keysVisible else { return }
-            if let visible = change.newValue, !visible {
-                self.scheduleStaggeredRepaints()
+            if let visible = change.newValue {
+                if visible {
+                    // Bar is back — reset the re-assert backoff
+                    self.reassertFailures = 0
+                } else {
+                    self.scheduleStaggeredRepaints()
+                }
             }
         }
         return tb
@@ -194,8 +217,16 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // Instead we just re-assert the same cached NSTouchBar object directly
     // (blank → present), which is one transition instead of two.
 
-    private func repaintTouchBar() {
+    // `force` bypasses the minimum re-present interval; used by the watchdog
+    // (after its own backoff) and when the user explicitly toggles the bar.
+    private func repaintTouchBar(force: Bool = false) {
         guard keysVisible, !isSleeping else { return }
+
+        // Never present more than once per 0.5s; every present re-lays-out
+        // the Control Strip, and the strip re-layout is what the user sees
+        // as "all the other Touch Bar icons flickering".
+        if !force && Date().timeIntervalSince(lastPresentAttempt) < 0.5 { return }
+        lastPresentAttempt = Date()
 
         if touchBar == nil {
             self.touchBar = setupTouchBar()
@@ -227,7 +258,11 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
             NSTouchBarItem.addSystemTrayItem(item)
         }
 
+        // Set presence once per run — re-asserting on every repaint makes the
+        // whole Control Strip re-layout and flicker.
+        guard !controlStripPresenceSet else { return }
         DFRElementSetControlStripPresenceForIdentifier(.controlStripItem, true)
+        controlStripPresenceSet = true
     }
 
     @objc private func controlStripTapped() {
@@ -248,6 +283,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         NSTouchBar.presentSystemModalTouchBar(touchBar!, placement: 0,
                                                systemTrayItemIdentifier: .controlStripItem)
 
+        lastPresentAttempt = Date()
+        reassertFailures = 0
         keysVisible = true
 
         showControlStripIcon()

@@ -34,6 +34,7 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 - 🎛️ **Seamless Control Strip Toggle:** A clean ⌨️ icon sits persistently in your Control Strip. Tap it to slide in your custom keys instantly; tap again to hide them and return to standard macOS actions.
 - ⌨️ **Global Hotkey:** Press `⌃⌥⌘B` anywhere to show/hide your keys — no need to reach for the Control Strip icon.
 - 🖱️ **Interactive GUI Editor:** Built-in native macOS window for managing, **reordering**, and adding new keys or profiles in seconds.
+- 🔍 **Action Palette (⌃⌥⌘Space):** Raycast-style, keyboard-driven command palette. Type to fuzzy-search every configured key, app-launcher, URL opener, shell command, media key and window snap — across default and per-app profiles. **Works on all Macs, with or without a Touch Bar.**
 - 🔁 **Launch at Login:** Optional menu-bar toggle to start bttopn automatically when you log in.
 - 📋 **Clipboard History:** Menu-bar list of your last 10 copied text snippets — click one to paste it into the frontmost app. **Off by default**, text-only, in-memory only, and concealed pasteboards (password managers) are never stored.
 - 🚀 **Ultra-lightweight:** Compiled natively in Swift. Hides from the Dock/App Switcher, running quietly in the menu bar with `0%` idle CPU usage and < `15MB` RAM footprint.
@@ -53,6 +54,8 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 | **Window Snapping**| ✅ Halves, thirds, maximize, center — via Accessibility API | ✅ Supported |
 | **Per-Key Static Modifiers**| ✅ One-tap `⌘Z`, `⌘⇧4`, … | ✅ Supported |
 | **Clipboard Manager**| ✅ Text history, in-memory, off by default, concealed types excluded | ✅ Supported |
+| **Keyboard-Driven Action Palette**| ✅ Built in — fuzzy-search and run any action from anywhere | ✅ Supported (paid) |
+| **Works Without Touch Bar**| ✅ Action Palette + clipboard history + window snapping | ✅ Supported (paid) |
 | **Global Hotkey Toggle**| ✅ `⌃⌥⌘B` | ✅ Customizable |
 | **Launch at Login**| ✅ Menu-bar toggle | ✅ Supported |
 | **Raycast/Spotlight Sync**| 🔄 **Auto-Restores Touch Bar instantly** | ⚠️ Requires manual settings tweak |
@@ -89,7 +92,8 @@ To bypass this and achieve system-wide persistence, **bttopn** hooks into Apple'
 3. **App-Switch Interceptor:** Subscribes to `NSWorkspace.didActivateApplicationNotification`. When a launcher like Raycast steals window focus and overrides the Touch Bar, **bttopn** waits `200ms` (for the OS transition to settle) and programmatically re-asserts the system modal overlay. The same path resolves the frontmost app's **per-app profile** and rebuilds the key set when it changes.
 4. **Keystroke Simulation:** Listens to the hardware keyboard's modifier state via `CGEventSource.flagsState(.hidSystemState)` and broadcasts synthetic key-down/key-up sequence events to the frontmost window using `CGEvent.post(tap: .cghidEventTap)`.
 5. **Key Actions:** Each button dispatches through `ActionRunner`: virtual keycodes via the CGEvent path above, media keys via the `systemDefined`/`NX_KEYTYPE_*` event path, window snapping via the Accessibility API (`WindowManager`), and app/URL/shell actions via `NSWorkspace` / `Process`.
-6. **Global Hotkey:** A Carbon `RegisterEventHotKey` binding (`⌃⌥⌘B`) toggles the overlay from anywhere — no Accessibility prompt needed for the hotkey itself.
+6. **Global Hotkeys:** Carbon `RegisterEventHotKey` bindings (`⌃⌥⌘B` toggle overlay, `⌃⌥⌘Space` action palette) — no Accessibility prompt needed for the hotkeys themselves.
+7. **Action Palette:** A non-activating floating panel (`NSPanel`) that becomes key without activating bttopn — search is fuzzy substring matching over all configured actions; selection runs through `ActionRunner`.
 
 ### System Flow Architecture
 
@@ -126,6 +130,13 @@ You can easily configure your keys through two different methods:
 5. Use the `↑`/`↓` buttons on each row to reorder keys.
 6. Click **Save & Apply** — changes go live instantly.
 
+### Action Palette (newer Macs — no Touch Bar required)
+Press **`⌃⌥⌘Space`** anywhere to open a fast, keyboard-driven palette:
+1. Type a few characters — e.g. `undo`, `gh`, `left ½` — and matching actions are filtered instantly.
+2. `↑`/`↓` to navigate, `↩` to run, `⎋` to close, or just click an entry.
+3. Every action you've configured is included: default keys and all per-app profiles (each entry shows its scope, e.g. `Raycast · Key Press`).
+4. Keystroke actions fire into the app you were using — bttopn never steals frontmost focus.
+
 ### Clipboard History
 1. Click the `⌨️` icon in your macOS top **Menu Bar** → **Clipboard History** → **Enabled**.
 2. Copy text as usual. Open the same menu to see your last 10 snippets.
@@ -133,6 +144,10 @@ You can easily configure your keys through two different methods:
 4. **Clear History** wipes the list; quitting bttopn always clears it.
 
 **Privacy guarantees:** text-only, stored in memory (never written to disk), off by default, and pasteboards marked `org.nspasteboard.ConcealedType` / `TransientType` / `AutoGeneratedType` (1Password, system auto-paste, etc.) are never recorded.
+
+### Quick Global Shortcuts
+- **`⌃⌥⌘B`** — show/hide your Touch Bar keys overlay
+- **`⌃⌥⌘Space`** — open the Action Palette
 
 ### Method B: Manual JSON File Editing
 If you prefer configuring via code or want to backup your settings, the configuration is stored in a clean JSON format (schema v2):
@@ -196,6 +211,21 @@ chmod +x build.sh
 ```bash
 ./test.sh
 ```
+
+**Persistent Accessibility permission (stable local signing):** an ad-hoc signed build is seen as a *new app* by macOS on every reinstall, so the Accessibility grant must be re-added each time. Fix — sign every build with one stable self-signed certificate:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout bttopn-sign.key -out bttopn-sign.crt -days 3650 -nodes \
+  -subj "/CN=bttopn Local Signing" \
+  -addext "keyUsage=critical,digitalSignature" \
+  -addext "extendedKeyUsage=codeSigning"
+openssl pkcs12 -export -out bttopn-sign.p12 -inkey bttopn-sign.key -in bttopn-sign.crt \
+  -passout pass:bttopn-local -macalg SHA1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES
+security import bttopn-sign.p12 -k ~/Library/Keychains/login.keychain-db -P bttopn-local -T /usr/bin/codesign
+rm bttopn-sign.key bttopn-sign.crt bttopn-sign.p12   # private key stays in your login keychain
+```
+
+`./build.sh` automatically signs with `bttopn Local Signing` when present (check with `codesign -d -r- build/bttopn.app` — the designated requirement will say `certificate leaf = …`, which is stable across builds). One re-grant of Accessibility is needed after switching to a stable signature; after that it **persists across every reinstall**.
 
 ---
 
