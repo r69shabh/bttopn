@@ -34,7 +34,8 @@ swiftc \
     Sources/KeyAction.swift \
     Sources/ActionRunner.swift \
     Sources/HotKeyManager.swift \
-    Sources/MediaKeys.swift
+    Sources/MediaKeys.swift \
+    Sources/WindowManager.swift
 
 # Compile Swift sources for Intel (x86_64)
 swiftc \
@@ -56,7 +57,8 @@ swiftc \
     Sources/KeyAction.swift \
     Sources/ActionRunner.swift \
     Sources/HotKeyManager.swift \
-    Sources/MediaKeys.swift
+    Sources/MediaKeys.swift \
+    Sources/WindowManager.swift
 
 # Create Universal Binary
 lipo -create -output "$APP_BUNDLE/Contents/MacOS/$APP_NAME" \

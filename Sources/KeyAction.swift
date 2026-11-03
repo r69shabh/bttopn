@@ -12,6 +12,7 @@ enum KeyAction: String, Codable {
     case launchApp  // open an app by bundle identifier
     case openURL    // open a URL in the default browser
     case shell      // run a shell command via /bin/sh in the background
+    case windowSnap // snap the frontmost window via Accessibility (half/third/maximize/center)
 
     var displayName: String {
         switch self {
@@ -20,8 +21,9 @@ enum KeyAction: String, Codable {
         case .launchApp: return "Launch App"
         case .openURL:   return "Open URL"
         case .shell:     return "Shell Command"
+        case .windowSnap: return "Window Snap"
         }
     }
 
-    static let allCasesInMenu: [KeyAction] = [.key, .mediaKey, .launchApp, .openURL, .shell]
+    static let allCasesInMenu: [KeyAction] = [.key, .mediaKey, .launchApp, .openURL, .shell, .windowSnap]
 }

@@ -373,6 +373,7 @@ class EditKeysWindowController: NSWindowController {
         // Seed a sensible default value when switching actions
         switch action {
         case .mediaKey: swapParameterView(for: row, with: action, currentValue: MediaKeys.all.first?.name, keyCode: 0x31)
+        case .windowSnap: swapParameterView(for: row, with: action, currentValue: WindowSnaps.all.first?.name, keyCode: 0x31)
         case .launchApp: swapParameterView(for: row, with: action, currentValue: nil, keyCode: 0x31)
         case .openURL, .shell: swapParameterView(for: row, with: action, currentValue: nil, keyCode: 0x31)
         case .key: swapParameterView(for: row, with: action, currentValue: nil, keyCode: 0x31)
@@ -405,6 +406,19 @@ class EditKeysWindowController: NSWindowController {
             }
             if let value = currentValue,
                let index = MediaKeys.all.firstIndex(where: { $0.name == value }) {
+                popup.selectItem(at: index)
+            }
+            popup.frame = row.parameterHolder.bounds
+            view = popup
+
+        case .windowSnap:
+            let popup = NSPopUpButton()
+            for (index, entry) in WindowSnaps.all.enumerated() {
+                popup.addItem(withTitle: entry.name)
+                popup.menu?.items.last?.tag = index
+            }
+            if let value = currentValue,
+               let index = WindowSnaps.all.firstIndex(where: { $0.name == value }) {
                 popup.selectItem(at: index)
             }
             popup.frame = row.parameterHolder.bounds
@@ -530,6 +544,11 @@ class EditKeysWindowController: NSWindowController {
                    MediaKeys.all.indices.contains(popup.indexOfSelectedItem) {
                     value = MediaKeys.all[popup.indexOfSelectedItem].name
                 }
+            case .windowSnap:
+                if let popup = row.parameterView as? NSPopUpButton,
+                   WindowSnaps.all.indices.contains(popup.indexOfSelectedItem) {
+                    value = WindowSnaps.all[popup.indexOfSelectedItem].name
+                }
             case .launchApp:
                 if let popup = row.parameterView as? NSPopUpButton {
                     let index = popup.indexOfSelectedItem
@@ -557,6 +576,7 @@ class EditKeysWindowController: NSWindowController {
         switch action {
         case .key: return KeyCodes.defaultLabel(for: keyCode)
         case .mediaKey: return MediaKeys.defaultLabel(forValue: value)
+        case .windowSnap: return WindowSnaps.defaultLabel(forValue: value)
         case .launchApp: return value?.split(separator: ".").last.map { String($0).capitalized } ?? "App"
         case .openURL: return "URL"
         case .shell: return "$_"

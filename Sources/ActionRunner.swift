@@ -16,6 +16,8 @@ enum ActionRunner {
             openURL(mapping.value)
         case .shell:
             runShell(mapping.value)
+        case .windowSnap:
+            WindowManager.snap(mapping.value ?? "")
         }
     }
 

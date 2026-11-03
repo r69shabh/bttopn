@@ -47,6 +47,7 @@ struct ConfigTest {
             KeyMapping(label: "Calc", keyCode: 0, action: .launchApp, value: "com.apple.Calculator"),
             KeyMapping(label: "GitHub", keyCode: 0, action: .openURL, value: "https://github.com"),
             KeyMapping(label: "🍺", keyCode: 0, action: .shell, value: "echo hi"),
+            KeyMapping(label: "Left ½", keyCode: 0, action: .windowSnap, value: "Left Half"),
         ], profiles: [
             AppProfile(bundleID: "com.raycast.macos", name: "Raycast",
                        keys: [KeyMapping(label: "Enter", keyCode: 0x24)]),

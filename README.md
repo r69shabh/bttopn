@@ -26,7 +26,7 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 ## ✨ Features
 
 - 🎹 **Custom Overlay Keys:** Quickly add custom buttons to your Touch Bar that trigger any physical keyboard keystroke.
-- 🚀 **Key Actions:** Every key can do more than type — simulate **media keys** (volume, brightness, play/pause), **launch apps**, **open URLs**, or **run shell commands**.
+- 🚀 **Key Actions:** Every key can do more than type — simulate **media keys** (volume, brightness, play/pause), **launch apps**, **open URLs**, **run shell commands**, or **snap the active window** (halves, thirds, maximize, center).
 - 🗂️ **Per-App Profiles:** Define different Touch Bar layouts for different apps (e.g. Raycast, Terminal, VS Code). bttopn swaps them automatically as you switch apps.
 - 🔄 **Persistent Auto-Restore:** Automatically detects frontmost application switches. If you invoke **Raycast, Spotlight, Alfred**, or any launcher, **bttopn** keeps your custom keys active and visible without interruptions.
 - ⌨️ **Physical Modifier State Sync:** Fully recognizes held physical modifier keys (`Cmd`, `Shift`, `Opt`, `Control`). Hold physical `Cmd` and tap your Touch Bar `Z` key to trigger `Cmd + Z`.
@@ -47,7 +47,8 @@ If you use a MacBook with a Touch Bar and have physical keyboard keys that are b
 | **Source Code** | 🔓 Fully Open Source (MIT License) | 🔒 Proprietary / Closed Source |
 | **Broken Key Mapping**| ✅ Instant, out-of-the-box | ✅ Supported |
 | **Per-App Touch Bar Layouts**| ✅ **Per-app profiles, swapped automatically** | ✅ Supported |
-| **Key Actions**| ✅ Keystrokes, media keys, launch apps, open URLs, shell commands | ✅ Supported |
+| **Key Actions**| ✅ Keystrokes, media keys, launch apps, open URLs, shell commands, window snapping | ✅ Supported |
+| **Window Snapping**| ✅ Halves, thirds, maximize, center — via Accessibility API | ✅ Supported |
 | **Global Hotkey Toggle**| ✅ `⌃⌥⌘B` | ✅ Customizable |
 | **Launch at Login**| ✅ Menu-bar toggle | ✅ Supported |
 | **Raycast/Spotlight Sync**| 🔄 **Auto-Restores Touch Bar instantly** | ⚠️ Requires manual settings tweak |
@@ -83,7 +84,7 @@ To bypass this and achieve system-wide persistence, **bttopn** hooks into Apple'
 2. **System Modal Overlay:** Employs `NSTouchBar.presentSystemModalTouchBar` to elevate the custom keys to a high-priority system-modal overlay, rendering it above whatever Touch Bar layout the active app demands.
 3. **App-Switch Interceptor:** Subscribes to `NSWorkspace.didActivateApplicationNotification`. When a launcher like Raycast steals window focus and overrides the Touch Bar, **bttopn** waits `200ms` (for the OS transition to settle) and programmatically re-asserts the system modal overlay. The same path resolves the frontmost app's **per-app profile** and rebuilds the key set when it changes.
 4. **Keystroke Simulation:** Listens to the hardware keyboard's modifier state via `CGEventSource.flagsState(.hidSystemState)` and broadcasts synthetic key-down/key-up sequence events to the frontmost window using `CGEvent.post(tap: .cghidEventTap)`.
-5. **Key Actions:** Each button dispatches through `ActionRunner`: virtual keycodes via the CGEvent path above, media keys via the `systemDefined`/`NX_KEYTYPE_*` event path, and app/URL/shell actions via `NSWorkspace` / `Process`.
+5. **Key Actions:** Each button dispatches through `ActionRunner`: virtual keycodes via the CGEvent path above, media keys via the `systemDefined`/`NX_KEYTYPE_*` event path, window snapping via the Accessibility API (`WindowManager`), and app/URL/shell actions via `NSWorkspace` / `Process`.
 6. **Global Hotkey:** A Carbon `RegisterEventHotKey` binding (`⌃⌥⌘B`) toggles the overlay from anywhere — no Accessibility prompt needed for the hotkey itself.
 
 ### System Flow Architecture
@@ -132,7 +133,8 @@ If you prefer configuring via code or want to backup your settings, the configur
     { "label": "Vol+", "keyCode": 0, "action": "mediaKey", "value": "Volume Up" },
     { "label": "Calc", "keyCode": 0, "action": "launchApp", "value": "com.apple.Calculator" },
     { "label": "GitHub", "keyCode": 0, "action": "openURL", "value": "https://github.com" },
-    { "label": "🧹",   "keyCode": 0, "action": "shell",    "value": "rm -rf ~/Downloads/tmp_*" }
+    { "label": "🧹",   "keyCode": 0, "action": "shell",    "value": "rm -rf ~/Downloads/tmp_*" },
+    { "label": "Left ½", "keyCode": 0, "action": "windowSnap", "value": "Left Half" }
   ],
   "profiles": [
     {
@@ -151,6 +153,7 @@ If you prefer configuring via code or want to backup your settings, the configur
 - Entries without an `action` field decode as `"key"` — old v1 configs keep working unchanged.
 - `profiles[i].keys` replaces the default layout **only while that app (by bundle ID) is frontmost**. Any other app gets the top-level `keys`.
 - `mediaKey` values: `Volume Up`, `Volume Down`, `Mute`, `Brightness Up`, `Brightness Down`, `Play / Pause`, `Next Track`, `Previous Track`.
+- `windowSnap` values: `Left Half`, `Right Half`, `Left Third`, `Right Third`, `Maximize`, `Center` — snaps the frontmost window via the Accessibility API.
 - `launchApp` takes a bundle identifier (e.g. `com.apple.Calculator`). If the app is already running it is activated instead of relaunched.
 - `shell` commands run via `/bin/sh -c` in the background.
 *(Tip: Refer to `Sources/KeyCodes.swift` for a comprehensive list of standard macOS virtual keycodes).*
