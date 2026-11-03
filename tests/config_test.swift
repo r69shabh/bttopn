@@ -141,6 +141,24 @@ struct ConfigTest {
         check(PaletteMRU.ordered(mruItems, mru: ["a", "a"], id: { $0 }) == mruItems,
               "mru: duplicate ids ignored")
 
+        // 8. Calculator: arithmetic, parens, unary minus, error safety
+        func calc(_ s: String) -> Double? { Calculator.eval(s) }
+        check(calc("12*45+3") == 543, "calc: precedence")
+        check(calc("2+3*4") == 14, "calc: mul before add")
+        check(calc("(2+3)*4") == 20, "calc: parentheses")
+        check(calc("-5+3") == -2, "calc: unary minus")
+        check(calc("10/4") == 2.5, "calc: division")
+        check(calc("--3") == 3, "calc: double negation")
+        check(calc("5 + 7 - 2") == 10, "calc: whitespace tolerated")
+        check(calc("1/0") == nil, "calc: divide by zero rejected")
+        check(calc("5+") == nil, "calc: trailing operator rejected")
+        check(calc("abc") == nil, "calc: letters rejected")
+        check(calc("") == nil, "calc: empty rejected")
+        check(calc("((") == nil, "calc: unbalanced parens rejected")
+        check(calc("5; rm -rf /") == nil, "calc: injection rejected")
+        check(Calculator.format(543) == "543", "calc: format integer")
+        check(Calculator.format(2.5) == "2.5", "calc: format decimal")
+
         if failures > 0 {
             print("\n\(failures) test(s) failed")
             exit(1)

@@ -90,4 +90,14 @@ final class ClipboardHistory {
         if collapsed.count <= maxLength { return collapsed }
         return String(collapsed.prefix(maxLength - 1)) + "…"
     }
+
+    // MARK: - Paste a history item into the frontmost app
+
+    static func pasteText(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        usleep(50_000) // let the pasteboard propagate before ⌘V
+        KeySimulator.simulateKeyPress(keyCode: 0x09, modifiers: ["cmd"]) // ⌘V
+    }
 }

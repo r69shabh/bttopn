@@ -40,7 +40,9 @@ swiftc \
     Sources/ClipboardHistory.swift \
     Sources/PaletteFilter.swift \
     Sources/ActionPalette.swift \
-    Sources/SystemActions.swift
+    Sources/SystemActions.swift \
+    Sources/Calculator.swift \
+    Sources/AppLauncher.swift
 
 # Compile Swift sources for Intel (x86_64)
 swiftc \
@@ -68,7 +70,9 @@ swiftc \
     Sources/ClipboardHistory.swift \
     Sources/PaletteFilter.swift \
     Sources/ActionPalette.swift \
-    Sources/SystemActions.swift
+    Sources/SystemActions.swift \
+    Sources/Calculator.swift \
+    Sources/AppLauncher.swift
 
 # Create Universal Binary
 lipo -create -output "$APP_BUNDLE/Contents/MacOS/$APP_NAME" \

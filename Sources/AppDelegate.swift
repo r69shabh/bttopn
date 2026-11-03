@@ -211,11 +211,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func pasteClipboardItem(_ sender: NSMenuItem) {
         guard let text = sender.representedObject as? String else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        usleep(50_000) // give the pasteboard a moment to propagate before ⌘V
-        KeySimulator.simulateKeyPress(keyCode: 0x09, modifiers: ["cmd"]) // ⌘V into the frontmost app
+        ClipboardHistory.pasteText(text)
     }
 
     // MARK: - Launch at Login

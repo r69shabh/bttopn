@@ -2,22 +2,36 @@ import Cocoa
 
 // MARK: - Action Palette
 //
-// A Raycast-style, keyboard-driven command palette for every action you
-// have configured in bttopn — works on ALL Macs, including ones without a
-// Touch Bar. Toggle with ⌃⌥⌘Space.
+// A Raycast-style, keyboard-driven launcher — works on ALL Macs, including
+// ones without a Touch Bar. Toggle with ⌃⌥⌘Space.
+//
+// What's in it:
+//   - Every configured bttopn action (keys, media, apps, URLs, shell, window
+//     snaps) across default + per-app profiles
+//   - 20 built-in system actions (window snaps, media keys, screenshots,
+//     Lock Screen, Dark Mode…)
+//   - Every app installed on this Mac (type "calc" → Calculator)
+//   - Clipboard history items (when enabled) — ↩ pastes the item
+//   - Instant calculator (type "12*45+3" → "= 543", ↩ copies it)
 //
 // Design notes:
 //   - The panel is a NON-ACTIVATING panel that becomes key: you can type
-//     into it, but bttopn itself never becomes the frontmost app — so
-//     keystroke/media actions land in the app you were using, not here.
+//     into it, but bttopn never becomes the frontmost app — actions land
+//     in the app you were using.
+//   - Apps and clipboard items only appear once you start typing.
 //   - ↑/↓ move selection, ↩ runs, ⎋ closes; clicking a row runs it.
-//   - Clicking outside closes the palette (windowDidResignKey).
+//   - MRU: recently run entries float to the top (UserDefaults, cap 20).
 
 struct PaletteEntry {
-    /// Stable id for MRU ordering, e.g. "Default|key|6|cmd|Undo" or "window-left-half".
+    /// Stable id for MRU ordering, e.g. "Default|key|6|cmd|Undo", "app:/Applications/Calculator.app".
     let id: String
     let title: String
     let detail: String
+    /// Apps / clipboard items only appear when there is a query — the
+    /// empty palette shows MRU + configured + built-in actions.
+    let hideWhenEmptyQuery: Bool
+    let symbol: String?
+    let icon: NSImage?
     let run: () -> Void
 }
 
@@ -37,6 +51,9 @@ final class ActionPalette: NSObject {
     private var entries: [PaletteEntry] = []
     private var filtered: [PaletteEntry] = []
 
+    private static let mruKey = "paletteMRU"
+    private static let mruLimit = 20
+
     init(configManager: ConfigManager) {
         self.configManager = configManager
         super.init()
@@ -55,15 +72,12 @@ final class ActionPalette: NSObject {
     private func show() {
         ensurePanel()
         entries = buildEntries()
-        filtered = entries
-        tableView?.reloadData()
         searchField?.stringValue = ""
-        emptyLabel?.isHidden = true
-        selectRow(filtered.isEmpty ? nil : 0)
+        applyFilter()
 
         if let screen = NSScreen.main {
             let visible = screen.visibleFrame
-            let size = NSSize(width: 580, height: 380)
+            let size = NSSize(width: 580, height: 400)
             panel?.setFrame(NSRect(x: visible.midX - size.width / 2,
                                    y: visible.maxY - size.height - 90,
                                    width: size.width, height: size.height),
@@ -80,16 +94,14 @@ final class ActionPalette: NSObject {
         panel?.orderOut(nil)
     }
 
-    // MARK: - Entries
-
-    private static let mruKey = "paletteMRU"
-    private static let mruLimit = 20
+    // MARK: - MRU
 
     private func loadMRU() -> [String] {
         UserDefaults.standard.stringArray(forKey: Self.mruKey) ?? []
     }
 
     private func recordRun(id: String) {
+        guard !id.hasPrefix("calc:") else { return } // don't pollute MRU with arithmetic
         var mru = loadMRU()
         mru.removeAll { $0 == id }
         mru.insert(id, at: 0)
@@ -97,12 +109,14 @@ final class ActionPalette: NSObject {
         UserDefaults.standard.set(mru, forKey: Self.mruKey)
     }
 
+    // MARK: - Entries
+
     private static func entryID(scope: String, _ m: KeyMapping) -> String {
         [scope, m.action.rawValue, String(m.keyCode), m.value ?? "",
          (m.modifiers ?? []).joined(separator: "+"), m.label].joined(separator: "|")
     }
 
-    private func buildEntries() -> [PaletteEntry] {
+    private func configuredEntries() -> [PaletteEntry] {
         var out: [PaletteEntry] = []
         func append(_ mapping: KeyMapping, scope: String) {
             var parts = [scope, mapping.action.displayName]
@@ -114,7 +128,10 @@ final class ActionPalette: NSObject {
             }
             out.append(PaletteEntry(id: Self.entryID(scope: scope, mapping),
                                     title: mapping.label,
-                                    detail: parts.joined(separator: " · ")) {
+                                    detail: parts.joined(separator: " · "),
+                                    hideWhenEmptyQuery: false,
+                                    symbol: "command",
+                                    icon: nil) {
                 ActionRunner.run(mapping)
             })
         }
@@ -122,21 +139,79 @@ final class ActionPalette: NSObject {
         for profile in configManager.config.profiles {
             for mapping in profile.keys { append(mapping, scope: profile.name) }
         }
-        // Built-in system actions — palette is useful out of the box,
-        // even with zero keys configured
+        return out
+    }
+
+    private func buildEntries() -> [PaletteEntry] {
+        var out = configuredEntries()
+
+        // Built-in system actions — useful even with zero configuration
         for builtin in SystemActions.all {
             out.append(PaletteEntry(id: builtin.id,
                                     title: builtin.title,
                                     detail: builtin.detail,
+                                    hideWhenEmptyQuery: false,
+                                    symbol: "gearshape",
+                                    icon: nil,
                                     run: builtin.run))
         }
-        // MRU: what you run most floats to the top
-        return PaletteMRU.ordered(out, mru: loadMRU(), id: { $0.id })
+
+        // Every app on this Mac (query-only visibility)
+        for app in AppLauncher.list() {
+            let path = app.url.standardizedFileURL.path
+            out.append(PaletteEntry(id: "app:\(path)",
+                                    title: app.name,
+                                    detail: "Application",
+                                    hideWhenEmptyQuery: true,
+                                    symbol: nil,
+                                    icon: NSWorkspace.shared.icon(forFile: app.url.path)) {
+                AppLauncher.launch(app)
+            })
+        }
+
+        // Clipboard history items — ↩ pastes the item (query-only visibility)
+        if ClipboardHistory.shared.isEnabled {
+            for item in ClipboardHistory.shared.items {
+                let preview = ClipboardHistory.preview(item, maxLength: 60)
+                out.append(PaletteEntry(id: "clip:\(item.prefix(40))",
+                                        title: preview,
+                                        detail: "Clipboard · ↩ pastes into current app",
+                                        hideWhenEmptyQuery: true,
+                                        symbol: "doc.on.clipboard",
+                                        icon: nil) {
+                    ClipboardHistory.pasteText(item)
+                })
+            }
+        }
+        return out
+    }
+
+    private func calculatorEntry(for query: String) -> PaletteEntry? {
+        guard let value = Calculator.eval(query) else { return nil }
+        let formatted = Calculator.format(value)
+        return PaletteEntry(id: "calc:\(query)",
+                            title: "= \(formatted)",
+                            detail: "Calculator · ↩ copies result",
+                            hideWhenEmptyQuery: false,
+                            symbol: "function",
+                            icon: nil) {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(formatted, forType: .string)
+        }
     }
 
     private func applyFilter() {
         let query = searchField?.stringValue ?? ""
-        filtered = entries.filter { PaletteFilter.matches(query, in: $0.title + " " + $0.detail) }
+        var list = entries.filter { entry in
+            if query.isEmpty && entry.hideWhenEmptyQuery { return false }
+            return PaletteFilter.matches(query, in: entry.title + " " + entry.detail)
+        }
+        list = PaletteMRU.ordered(list, mru: loadMRU(), id: { $0.id })
+        if let calc = calculatorEntry(for: query) {
+            list.insert(calc, at: 0) // calculator result pinned to the top
+        }
+        filtered = list
         tableView?.reloadData()
         emptyLabel?.isHidden = !filtered.isEmpty
         selectRow(filtered.isEmpty ? nil : 0)
@@ -208,7 +283,7 @@ final class ActionPalette: NSObject {
     private func ensurePanel() {
         if panel != nil { return }
 
-        let size = NSSize(width: 580, height: 380)
+        let size = NSSize(width: 580, height: 400)
         let panel = PalettePanel(contentRect: NSRect(origin: .zero, size: size),
                                  styleMask: [.borderless, .nonactivatingPanel],
                                  backing: .buffered,
@@ -235,9 +310,9 @@ final class ActionPalette: NSObject {
         panel.contentView = root
 
         // Search field
-        let field = NSTextField(frame: NSRect(x: 18, y: size.height - 56, width: size.width - 36, height: 34))
-        field.placeholderString = "Search actions…"
-        field.font = .systemFont(ofSize: 20, weight: .medium)
+        let field = NSTextField(frame: NSRect(x: 18, y: size.height - 58, width: size.width - 36, height: 34))
+        field.placeholderString = "Type to search apps, actions, clipboard… or a sum"
+        field.font = .systemFont(ofSize: 19, weight: .medium)
         field.isBezeled = false
         field.drawsBackground = false
         field.focusRingType = .none
@@ -246,14 +321,14 @@ final class ActionPalette: NSObject {
         root.addSubview(field)
 
         // Results table
-        let scroll = NSScrollView(frame: NSRect(x: 10, y: 12, width: size.width - 20, height: size.height - 72))
+        let scroll = NSScrollView(frame: NSRect(x: 10, y: 12, width: size.width - 20, height: size.height - 74))
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.autoresizingMask = [.width, .height]
 
         let table = NSTableView()
         table.headerView = nil
-        table.rowHeight = 46
+        table.rowHeight = 44
         table.intercellSpacing = NSSize(width: 0, height: 2)
         table.backgroundColor = .clear
         table.selectionHighlightStyle = .regular
@@ -269,7 +344,7 @@ final class ActionPalette: NSObject {
         root.addSubview(scroll)
 
         // Empty state
-        let empty = NSTextField(labelWithString: "No matching actions")
+        let empty = NSTextField(labelWithString: "No matches")
         empty.font = .systemFont(ofSize: 13, weight: .medium)
         empty.textColor = .secondaryLabelColor
         empty.alignment = .center
@@ -346,13 +421,17 @@ extension ActionPalette: NSWindowDelegate {
 
 private final class PaletteEntryCell: NSTableCellView {
 
+    private let iconView = NSImageView()
     private let titleField = NSTextField(labelWithString: "")
     private let detailField = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
-        titleField.font = .systemFont(ofSize: 14, weight: .semibold)
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        titleField.font = .systemFont(ofSize: 13, weight: .semibold)
         titleField.lineBreakMode = .byTruncatingTail
         titleField.translatesAutoresizingMaskIntoConstraints = false
 
@@ -361,15 +440,21 @@ private final class PaletteEntryCell: NSTableCellView {
         detailField.lineBreakMode = .byTruncatingTail
         detailField.translatesAutoresizingMaskIntoConstraints = false
 
+        addSubview(iconView)
         addSubview(titleField)
         addSubview(detailField)
         NSLayoutConstraint.activate([
-            titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 24),
+            iconView.heightAnchor.constraint(equalToConstant: 24),
+
+            titleField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
             titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            titleField.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            titleField.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             titleField.heightAnchor.constraint(equalToConstant: 18),
 
-            detailField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            detailField.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 10),
             detailField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             detailField.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 1),
             detailField.heightAnchor.constraint(equalToConstant: 14),
@@ -379,6 +464,18 @@ private final class PaletteEntryCell: NSTableCellView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(with entry: PaletteEntry) {
+        if let icon = entry.icon {
+            iconView.image = icon
+            iconView.contentTintColor = nil
+        } else if let symbol = entry.symbol,
+                  let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+            image.size = NSSize(width: 20, height: 20)
+            iconView.image = image
+            iconView.contentTintColor = .secondaryLabelColor
+        } else {
+            iconView.image = NSImage(systemSymbolName: "circle", accessibilityDescription: nil)
+            iconView.contentTintColor = .tertiaryLabelColor
+        }
         titleField.stringValue = entry.title
         detailField.stringValue = entry.detail
     }
