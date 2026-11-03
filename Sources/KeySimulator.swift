@@ -32,6 +32,35 @@ enum KeySimulator {
         keyUp.post(tap: .cghidEventTap)
     }
 
+    /// Simulate a system media key (volume, brightness, play/pause, …).
+    /// Uses the systemDefined CGEvent path with NX_KEYTYPE_* codes; the
+    /// Touch Bar can't send these as normal key events.
+    static func simulateMediaKey(_ name: String) {
+        guard let entry = MediaKeys.entry(named: name) else {
+            print("bttopn: unknown media key '\(name)'")
+            return
+        }
+        for isDown in [true, false] {
+            let flags = isDown
+                ? NSEvent.ModifierFlags(rawValue: 0xA00)
+                : NSEvent.ModifierFlags(rawValue: 0xB00)
+            let data1 = Int(entry.nxKeyType) << 16 | (isDown ? 0x0A00 : 0x0B00)
+            guard let event = NSEvent.otherEvent(
+                with: .systemDefined,
+                location: .zero,
+                modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                subtype: 8,
+                data1: data1,
+                data2: -1
+            ) else { continue }
+            event.cgEvent?.post(tap: .cghidEventTap)
+            usleep(8000) // 8ms between down/up, mirrors simulateKeyPress
+        }
+    }
+
     /// Check if the app has Accessibility permissions (required for CGEvent posting).
     /// If `promptUser` is true, shows the system permission dialog.
     static func checkAccessibility(promptUser: Bool = true) -> Bool {

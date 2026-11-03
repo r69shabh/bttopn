@@ -40,6 +40,12 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // to prevent waking the CPU unnecessarily.
     private var isSleeping: Bool = false
 
+    // The exact key set currently rendered in the Touch Bar, and which
+    // profile context it came from ("default" or "profile:<bundleID>").
+    // Button tags are indices into this array.
+    private var currentKeys: [KeyMapping] = []
+    private var renderedContextID: String?
+
     init(configManager: ConfigManager) {
         self.configManager = configManager
         super.init()
@@ -119,6 +125,14 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         // Don't fight ourselves
         let ownBundleID = Bundle.main.bundleIdentifier ?? "com.personal.bttopn"
         if activeBundleID == ownBundleID { return }
+
+        // If the newly activated app has its own profile (or lost one), swap
+        // the rendered key set. rebuild() re-presents immediately; the
+        // staggered repaints / watchdog cover any OS-initiated dismissal.
+        let contextID = configManager.config.contextID(forBundleID: activeBundleID)
+        if contextID != renderedContextID {
+            rebuild()
+        }
 
         scheduleStaggeredRepaints()
     }
@@ -316,13 +330,18 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
         let item = NSCustomTouchBarItem(identifier: identifier)
 
+        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let keys = configManager.config.keys(forBundleID: frontmostBundleID)
+        self.currentKeys = keys
+        self.renderedContextID = configManager.config.contextID(forBundleID: frontmostBundleID)
+
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 2
 
-        for keyMapping in configManager.config.keys {
+        for (index, keyMapping) in keys.enumerated() {
             let button = NSButton(title: keyMapping.label, target: self, action: #selector(keyButtonTapped(_:)))
-            button.tag = keyMapping.keyCode
+            button.tag = index
             button.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .medium)
 
             let textWidth = (keyMapping.label as NSString)
@@ -340,7 +359,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // MARK: - Actions
 
     @objc private func keyButtonTapped(_ sender: NSButton) {
-        let keyCode = CGKeyCode(sender.tag)
-        KeySimulator.simulateKeyPress(keyCode: keyCode)
+        let index = sender.tag
+        guard currentKeys.indices.contains(index) else { return }
+        ActionRunner.run(currentKeys[index])
     }
 }

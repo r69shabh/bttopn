@@ -1,4 +1,5 @@
 import Cocoa
+import ServiceManagement
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -9,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Menu items that need state updates
     private var toggleMenuItem: NSMenuItem!
+    private var launchAtLoginMenuItem: NSMenuItem!
 
     // Held for the lifetime of the app to tell macOS this process performs
     // user-initiated work. This enables correct App Nap classification while
@@ -55,7 +57,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 name: NSWorkspace.didWakeNotification,
                                 object: nil)
 
-        // 6. Declare this process as user-initiated work that allows idle system
+        // 6. Global hotkey ⌃⌥⌘B toggles the keys overlay from anywhere.
+        HotKeyManager.shared.onToggle = { [weak self] in
+            self?.toggleTouchBar()
+        }
+        HotKeyManager.shared.register()
+
+        // 7. Declare this process as user-initiated work that allows idle system
         //    sleep. This gives the OS accurate information for App Nap decisions
         //    while still permitting full system sleep when idle.
         backgroundActivity = ProcessInfo.processInfo.beginActivity(
@@ -91,8 +99,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
 
-        toggleMenuItem = NSMenuItem(title: "Hide Touch Bar", action: #selector(toggleTouchBar), keyEquivalent: "t")
+        toggleMenuItem = NSMenuItem(title: "Hide Keys", action: #selector(toggleTouchBar), keyEquivalent: "t")
         toggleMenuItem.target = self
+        toggleMenuItem.toolTip = "Global shortcut: ⌃⌥⌘B"
         menu.addItem(toggleMenuItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -109,6 +118,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         configPathItem.target = self
         menu.addItem(configPathItem)
 
+        launchAtLoginMenuItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchAtLoginMenuItem.target = self
+        menu.addItem(launchAtLoginMenuItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(title: "Quit bttopn", action: #selector(quitApp), keyEquivalent: "q")
@@ -116,6 +129,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quitItem)
 
         statusItem.menu = menu
+        updateLaunchAtLoginMenuState()
+    }
+
+    // MARK: - Launch at Login
+
+    private func updateLaunchAtLoginMenuState() {
+        launchAtLoginMenuItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("bttopn: launch-at-login toggle failed: \(error)")
+            let alert = NSAlert()
+            alert.messageText = "Couldn't update Launch at Login"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+        updateLaunchAtLoginMenuState()
     }
 
     // MARK: - Actions
@@ -146,6 +185,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quitApp() {
+        HotKeyManager.shared.unregister()
         touchBarManager.dismissTouchBar()
         // End background activity assertion cleanly on quit
         if let activity = backgroundActivity {
