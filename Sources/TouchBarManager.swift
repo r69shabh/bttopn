@@ -1,4 +1,5 @@
 import Cocoa
+import Carbon
 
 // MARK: - Touch Bar Identifiers
 
@@ -35,14 +36,20 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // presentSystemModalTouchBar calls while Secure Input is held.
     private var watchdogTimer: Timer?
 
-    // Sustained-loss tracking: the OS can permanently stop accepting our
-    // system-modal Touch Bar after a hostile overlay (Raycast, password
-    // fields, etc.). Re-presents stop working and only re-registering with
-    // the Touch Bar server (i.e. restarting the app) revives it. AppDelegate
-    // hooks onSustainedHidden to do exactly that — once per episode, and
-    // rate-limited by AppDelegate to once per hour.
-    private var hiddenSince: Date?
-    private var sustainedHiddenNotified = false
+    // Secure Input (Raycast's field, password fields, Wi-Fi prompts): macOS
+    // hides the Touch Bar and drops synthetic keystrokes, BY DESIGN. The
+    // only winning move is not to fight it: we pause all re-asserts while
+    // it holds (each present call re-lays-out the whole Control Strip —
+    // that was the remaining flicker source) and re-present the moment it
+    // releases. secureInputActive tracks our paused state for the menu bar.
+    private(set) var secureInputActive = false
+    var onSecureInputChanged: ((Bool) -> Void)?
+
+    // Sustained-loss handling: past a threshold of rejected presents, macOS
+    // stops accepting this client entirely (see PresentBudget). The breaker
+    // trips → we stop hammering and ask AppDelegate to re-register by
+    // restarting (once per hour, rate-limited there). ⌃⌥⌘B always re-arms
+    // manually as the escape hatch.
     var onSustainedHidden: (() -> Void)?
 
     /// Written on every present/dismiss so a relaunch (login item or our own
@@ -50,12 +57,12 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     static let keysWantedKey = "touchBarKeysWanted"
 
     // Anti-flicker state. Every presentSystemModalTouchBar makes ALL Control
-    // Strip icons (camera, volume, brightness…) re-layout, and every
-    // destroy/rebuild cycle re-registers our tray item. We therefore rate-
-    // limit presents and back off exponentially while the OS refuses to show
-    // the bar — same guarantee (keys come back), without the strobe.
+    // Strip icons (camera, volume, brightness…) re-layout, and past a point
+    // macOS bans this client outright. We present only when the bar is
+    // hidden, back off exponentially, and trip a circuit breaker after
+    // repeated failures.
     private var lastPresentAttempt = Date.distantPast
-    private var reassertFailures = 0
+    private var budget = PresentBudget.State()
     private var controlStripPresenceSet = false
 
     // Tracks whether the system is currently asleep.
@@ -83,12 +90,12 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     // MARK: - Watchdog Timer
     //
-    // Fires every 0.5 seconds while keysVisible == true. If the Touch Bar is
-    // hidden but should be visible, it unconditionally re-asserts — no Secure
-    // Input check, no guards. If the OS rejects the call (e.g. a system dialog
-    // has hard-locked the Touch Bar), it fails silently and we try again in 0.5s.
-    // The moment any blocker (Raycast, Spotlight, password field, Wi-Fi prompt)
-    // releases control, the very next tick wins and brings the keys back.
+    // Fires every 0.5s while keysVisible == true. Only acts when the bar is
+    // hidden: re-presents with exponential backoff (attempt-based). After
+    // maxConsecutiveFailures rejected presents it trips the circuit breaker
+    // (PresentBudget) and stops entirely instead of getting bttopn banned by
+    // the Touch Bar arbitration — the app then relies on the explicit user
+    // toggle (⌃⌥⌘B) or the auto-restart to re-register.
 
     private func startWatchdog() {
         stopWatchdog()
@@ -107,34 +114,54 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     @objc private func watchdogTick() {
         guard keysVisible, !isSleeping else { return }
+
+        // Secure Input wins — never re-assert against it
+        if IsSecureEventInputEnabled() {
+            if !secureInputActive {
+                secureInputActive = true
+                NSLog("bttopn: Secure Input active — pausing Touch Bar re-asserts")
+                onSecureInputChanged?(true)
+            }
+            return
+        } else if secureInputActive {
+            secureInputActive = false
+            NSLog("bttopn: Secure Input released — restoring Touch Bar")
+            onSecureInputChanged?(false)
+            budget.reset()
+            if touchBar == nil || touchBar?.isVisible == false {
+                repaintTouchBar(force: true)
+            }
+        }
         // Only act if the Touch Bar is currently hidden — no-op if already visible
         guard let tb = touchBar, !tb.isVisible else {
-            hiddenSince = nil
-            sustainedHiddenNotified = false
+            budget.reset()
             return
         }
 
-        if hiddenSince == nil { hiddenSince = Date() }
-        if let since = hiddenSince,
-           Date().timeIntervalSince(since) > 90,
-           !sustainedHiddenNotified {
-            sustainedHiddenNotified = true
-            NSLog("bttopn: Touch Bar hidden for >90s despite re-asserts — requesting auto-restart")
-            onSustainedHidden?()
-        }
+        // Circuit breaker open — stop all presents entirely. The user can
+        // force a fresh attempt with ⌃⌥⌘B; otherwise the auto-restart
+        // re-registers us (rate-limited) and keys come back on their own.
+        if budget.suspended { return }
 
-        // Exponential backoff: 0.5s, 1s, 2s, … capped at 4s.
-        // Each present re-lays-out the whole Control Strip; hammering it
-        // makes every other strip icon flicker for as long as the OS keeps
-        // hiding our bar (e.g. during a slow app launch).
-        reassertFailures += 1
-        let backoff = min(0.5 * pow(2.0, Double(reassertFailures - 1)), 4.0)
+        // Attempt-based exponential backoff: 2s, 4s, 8s … capped at 8s.
+        // Every present re-lays-out the whole Control Strip — hammering
+        // gets the client banned, so each attempt is precious.
+        let backoff = min(2.0 * pow(2.0, Double(budget.failures)), 8.0)
         guard Date().timeIntervalSince(lastPresentAttempt) >= backoff else { return }
+
+        // Count this attempt before presenting; at the threshold the
+        // breaker trips and we don't even make the call.
+        budget.noteAttempt()
+        if budget.suspended {
+            NSLog("bttopn: \(PresentBudget.maxConsecutiveFailures) rejected presents — suspending (keys stay hidden until ⌃⌥⌘B or auto-restart)")
+            onSustainedHidden?()
+            return
+        }
 
         // The OS is ignoring the stale instance (common when Raycast or
         // Spotlight overlays the UI). Only rebuild it after several failed
-        // re-asserts — rebuilding on every tick is what caused the flicker.
-        if reassertFailures >= 4 {
+        // attempts — rebuilding on every tick is what caused the flicker.
+        if budget.failures >= 4 {
             touchBarObserver?.invalidate()
             touchBarObserver = nil
             NSTouchBar.dismissSystemModalTouchBar(tb)
@@ -184,9 +211,10 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     // MARK: - Staggered Repaints
     //
-    // Fired after an app-switch or a KVO dismissal. Multiple tiers ensure we
-    // catch both fast apps (hot-start Raycast: ~50ms) and slow apps (cold-start
-    // Raycast: 300ms+). The watchdog handles anything that outlasts 1.5s.
+    // Fired after an app-switch or a KVO dismissal. Kept lean on purpose:
+    // every present call re-lays-out the whole Control Strip, so we only
+    // make a few attempts at staggered moments; the backoff watchdog covers
+    // anything slower, and the circuit breaker covers rejection.
 
     private func scheduleStaggeredRepaints() {
         representTimers.forEach { $0.invalidate() }
@@ -195,9 +223,9 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         // Immediately try once — catches fast app switches right away
         repaintTouchBar()
 
-        // Then staggered retries to outlast slow cold-start animations
-        // (e.g. Raycast cold start: 200–800ms). Watchdog handles anything longer.
-        let delays = [0.15, 0.4, 0.8, 1.2, 1.8]
+        // Then a couple of retries to outlast slower cold-start animations
+        // (Raycast cold start: 200–800ms). Watchdog handles anything longer.
+        let delays = [0.3, 0.9, 1.6]
         for delay in delays {
             let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
                 DispatchQueue.main.async {
@@ -213,6 +241,11 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // MARK: - Touch Bar Setup (with KVO)
 
     private func setupTouchBar() -> NSTouchBar {
+        // Discard any observer from a previous bar instance before
+        // creating a new one — repeated rebuilds would leak observers
+        touchBarObserver?.invalidate()
+        touchBarObserver = nil
+
         let tb = NSTouchBar()
         tb.delegate = self
         tb.defaultItemIdentifiers = [.keyGroup]
@@ -223,8 +256,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
             guard let self = self, !self.isSleeping, self.keysVisible else { return }
             if let visible = change.newValue {
                 if visible {
-                    // Bar is back — reset the re-assert backoff
-                    self.reassertFailures = 0
+                    // Bar is back — breaker is clear, full budget restored
+                    self.budget.reset()
                 } else {
                     self.scheduleStaggeredRepaints()
                 }
@@ -248,6 +281,15 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // (after its own backoff) and when the user explicitly toggles the bar.
     private func repaintTouchBar(force: Bool = false) {
         guard keysVisible, !isSleeping else { return }
+        // macOS hides the bar under Secure Input; presenting anyway just
+        // re-lays-out the Control Strip for nothing (flicker).
+        if IsSecureEventInputEnabled() { return }
+        // Circuit breaker open — components stop making present calls entirely
+        if budget.suspended { return }
+        // Bar is already visible — never re-present just because something
+        // asked for a repaint. Every redundant present re-lays-out the whole
+        // Control Strip.
+        if let tb = touchBar, tb.isVisible { return }
 
         // Never present more than once per 0.5s; every present re-lays-out
         // the Control Strip, and the strip re-layout is what the user sees
@@ -311,10 +353,8 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
                                                systemTrayItemIdentifier: .controlStripItem)
 
         lastPresentAttempt = Date()
-        reassertFailures = 0
+        budget.reset()
         keysVisible = true
-        hiddenSince = nil
-        sustainedHiddenNotified = false
         UserDefaults.standard.set(true, forKey: TouchBarManager.keysWantedKey)
 
         showControlStripIcon()
@@ -323,8 +363,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     func dismissTouchBar() {
         keysVisible = false
-        hiddenSince = nil
-        sustainedHiddenNotified = false
+        budget.reset()
         UserDefaults.standard.set(false, forKey: TouchBarManager.keysWantedKey)
 
         representTimers.forEach { $0.invalidate() }
@@ -363,6 +402,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     /// Called by AppDelegate when macOS has finished waking from sleep.
     func resumeAfterWake() {
         isSleeping = false
+        budget.reset()
 
         guard keysVisible else { return }
 
@@ -377,6 +417,12 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     }
 
     func toggleTouchBar() {
+        // Escape hatch: breaker tripped and bar is hidden — a press means
+        // "try again fresh", not "dismiss" (keys are already invisible)
+        if keysVisible && budget.suspended {
+            presentTouchBar()
+            return
+        }
         if keysVisible {
             dismissTouchBar()
         } else {
@@ -386,7 +432,7 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     /// Rebuild after config change
     func rebuild() {
-        if keysVisible {
+        if keysVisible && !IsSecureEventInputEnabled() {
             presentTouchBar()
         }
     }

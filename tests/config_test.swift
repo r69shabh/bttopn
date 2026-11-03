@@ -121,6 +121,17 @@ struct ConfigTest {
                                              text: String(repeating: "x", count: ClipboardFilter.maxTextLength + 1)),
               "clipboard: oversized blob rejected")
 
+        // 9. Present budget: rate-limit the Touch Bar client to avoid the OS ban
+        var budget = PresentBudget.State()
+        check(budget.failures == 0 && !budget.suspended, "budget: fresh state unbroken")
+        for _ in 1...(PresentBudget.maxConsecutiveFailures - 1) { budget.noteAttempt() }
+        check(!budget.suspended, "budget: under threshold not suspended")
+        budget.noteAttempt()
+        check(budget.suspended, "budget: trips at threshold")
+        check(budget.failures == PresentBudget.maxConsecutiveFailures, "budget: counts attempts")
+        budget.reset()
+        check(!budget.suspended && budget.failures == 0, "budget: reset restores headroom")
+
         if failures > 0 {
             print("\n\(failures) test(s) failed")
             exit(1)

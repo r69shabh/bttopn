@@ -1,4 +1,5 @@
 import Cocoa
+import Carbon
 
 /// Simulates keyboard key presses using CGEvent API.
 /// Reads current modifier state so physical Cmd/Shift/etc. work with Touch Bar buttons.
@@ -12,7 +13,16 @@ enum KeySimulator {
     /// Simulate a single key press (down + up) for the given virtual key code.
     /// Combines physically-held modifier keys with any static `modifiers`
     /// from the mapping (e.g. per-key "always Cmd" for one-tap undo).
+    ///
+    /// Under Secure Input (Raycast's field, password fields, Wi-Fi prompts)
+    /// macOS silently drops synthetic keystrokes — we beep instead of
+    /// pretending a keypress happened.
     static func simulateKeyPress(keyCode: CGKeyCode, modifiers: [String] = []) {
+        if IsSecureEventInputEnabled() {
+            NSSound.beep()
+            print("bttopn: Secure Input active — keypress dropped")
+            return
+        }
         let source = CGEventSource(stateID: .hidSystemState)
 
         // Physically held modifiers, unioned with the mapping's static ones

@@ -218,11 +218,14 @@ rm bttopn-sign.key bttopn-sign.crt bttopn-sign.p12   # private key stays in your
 
 ---
 
-### Touch Bar recovery (the "it never comes back after Raycast" fix)
-macOS can permanently stop accepting bttopn's system-modal Touch Bar after a hostile overlay (Raycast, password fields, …). Because that's an OS-level lockout, bttopn now defends itself in three layers:
-1. **Re-presenting with a fresh bar** every time something steals focus (and on app switch) — fixes the ordinary cases with far less Control Strip flicker.
-2. **Exponential backoff watchdog** — keeps trying every 0.5s → 4s instead of hammering the system 2×/sec.
-3. **Self-heal** — if keys stay hidden for >90s despite all re-asserts, bttopn restarts itself once (at most once per hour) and **restores your keys automatically**, because the wanted-state is persisted (`touchBarKeysWanted`). Restarting re-registers it with the Touch Bar server — your old workaround of "reset the shortcut and try again", fully automatic.
+### Touch Bar recovery (the "dies after N Raycast invocations" fix)
+macOS can stop accepting bttopn's system-modal Touch Bar when the client hammers `presentSystemModalTouchBar` — historically observed as "keys work for a while, then vanish; only re-registering (e.g. toggling Raycast's hotkey) revives them". bttopn now defends itself:
+
+1. **Never re-presents while the bar is visible** — zero redundant Control Strip re-layouts on app switches.
+2. **Attempt-based exponential backoff** (2s → 8s cap) — the old watchdog presented ~2× per second, which is exactly the abuse that gets Touch Bar clients throttled.
+3. **Circuit breaker** — after 8 consecutive rejected presents, bttopn stops all present calls instead of deepening the ban. The keys stay hidden until you press **⌃⌥⌘B** (fresh attempt) or bttopn's one-shot auto-restart re-registers with the Touch Bar server (rate-limited to once per hour).
+4. **Secure Input** (password fields, Wi-Fi prompts): the overlay pauses while it's held and returns the moment it releases. Synthetic keystrokes can't type into Secure Input fields on any app — that's an OS rule, not ours (BTT is bound by it too). bttopn tells you instead of failing silently (a beep on tap).
+5. **Persisted wanted-state** (`touchBarKeysWanted`) — restarting bttopn (auto or manual) always restores your keys exactly as you left them.
 
 *(If you explicitly choose **Quit bttopn**, your keys stay off on the next launch — by design.)*
 
