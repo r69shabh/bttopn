@@ -35,6 +35,20 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     // presentSystemModalTouchBar calls while Secure Input is held.
     private var watchdogTimer: Timer?
 
+    // Sustained-loss tracking: the OS can permanently stop accepting our
+    // system-modal Touch Bar after a hostile overlay (Raycast, password
+    // fields, etc.). Re-presents stop working and only re-registering with
+    // the Touch Bar server (i.e. restarting the app) revives it. AppDelegate
+    // hooks onSustainedHidden to do exactly that — once per episode, and
+    // rate-limited by AppDelegate to once per hour.
+    private var hiddenSince: Date?
+    private var sustainedHiddenNotified = false
+    var onSustainedHidden: (() -> Void)?
+
+    /// Written on every present/dismiss so a relaunch (login item or our own
+    /// auto-restart) can restore the keys the user had on.
+    static let keysWantedKey = "touchBarKeysWanted"
+
     // Anti-flicker state. Every presentSystemModalTouchBar makes ALL Control
     // Strip icons (camera, volume, brightness…) re-layout, and every
     // destroy/rebuild cycle re-registers our tray item. We therefore rate-
@@ -94,7 +108,20 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
     @objc private func watchdogTick() {
         guard keysVisible, !isSleeping else { return }
         // Only act if the Touch Bar is currently hidden — no-op if already visible
-        guard let tb = touchBar, !tb.isVisible else { return }
+        guard let tb = touchBar, !tb.isVisible else {
+            hiddenSince = nil
+            sustainedHiddenNotified = false
+            return
+        }
+
+        if hiddenSince == nil { hiddenSince = Date() }
+        if let since = hiddenSince,
+           Date().timeIntervalSince(since) > 90,
+           !sustainedHiddenNotified {
+            sustainedHiddenNotified = true
+            NSLog("bttopn: Touch Bar hidden for >90s despite re-asserts — requesting auto-restart")
+            onSustainedHidden?()
+        }
 
         // Exponential backoff: 0.5s, 1s, 2s, … capped at 4s.
         // Each present re-lays-out the whole Control Strip; hammering it
@@ -286,6 +313,9 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
         lastPresentAttempt = Date()
         reassertFailures = 0
         keysVisible = true
+        hiddenSince = nil
+        sustainedHiddenNotified = false
+        UserDefaults.standard.set(true, forKey: TouchBarManager.keysWantedKey)
 
         showControlStripIcon()
         startWatchdog() // begin persistent Secure Input recovery
@@ -293,6 +323,9 @@ class TouchBarManager: NSObject, NSTouchBarDelegate {
 
     func dismissTouchBar() {
         keysVisible = false
+        hiddenSince = nil
+        sustainedHiddenNotified = false
+        UserDefaults.standard.set(false, forKey: TouchBarManager.keysWantedKey)
 
         representTimers.forEach { $0.invalidate() }
         representTimers.removeAll()

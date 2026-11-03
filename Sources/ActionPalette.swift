@@ -41,6 +41,11 @@ final class PalettePanel: NSPanel {
 
 final class ActionPalette: NSObject {
 
+    /// Wired by AppDelegate — used to re-assert the Touch Bar after our
+    /// floating panel becomes key (the OS hides the system-modal bar when
+    /// any panel takes focus, even non-activating ones like Raycast's).
+    weak var touchBarManager: TouchBarManager?
+
     private let configManager: ConfigManager
     private var panel: PalettePanel?
     private var searchField: NSTextField?
@@ -87,11 +92,18 @@ final class ActionPalette: NSObject {
         panel?.orderFrontRegardless()
         panel?.makeKey()
         if let field = searchField { panel?.makeFirstResponder(field) }
+
+        // Becoming key steals the Touch Bar context from the frontmost app —
+        // re-present fresh or the keys vanish while the palette is open
+        // (same thing Raycast's panel does).
+        touchBarManager?.rebuild()
     }
 
     private func hide() {
         removeKeyMonitor()
         panel?.orderOut(nil)
+        // Focus context shifts again on close — bring the keys back
+        touchBarManager?.rebuild()
     }
 
     // MARK: - MRU

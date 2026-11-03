@@ -234,6 +234,14 @@ rm bttopn-sign.key bttopn-sign.crt bttopn-sign.p12   # private key stays in your
 
 ---
 
+### Touch Bar recovery (the "it never comes back after Raycast" fix)
+macOS can permanently stop accepting bttopn's system-modal Touch Bar after a hostile overlay (Raycast, password fields, …). Because that's an OS-level lockout, bttopn now defends itself in three layers:
+1. **Re-presenting with a fresh bar** every time something steals focus (and on app switch) — fixes the ordinary cases with far less Control Strip flicker.
+2. **Exponential backoff watchdog** — keeps trying every 0.5s → 4s instead of hammering the system 2×/sec.
+3. **Self-heal** — if keys stay hidden for >90s despite all re-asserts, bttopn restarts itself once (at most once per hour) and **restores your keys automatically**, because the wanted-state is persisted (`touchBarKeysWanted`). Restarting re-registers it with the Touch Bar server — your old workaround of "reset the shortcut and try again", fully automatic.
+
+*(If you explicitly choose **Quit bttopn**, your keys stay off on the next launch — by design.)*
+
 ## ⚠️ Important Limitations
 
 As **bttopn** relies on private Apple system frameworks (`DFRFoundation`):

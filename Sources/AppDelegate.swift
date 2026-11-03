@@ -37,10 +37,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         configManager = ConfigManager()
         actionPalette = ActionPalette(configManager: configManager)
         touchBarManager = TouchBarManager(configManager: configManager)
+        actionPalette.touchBarManager = touchBarManager
 
         // Rebuild touch bar on config changes
         configManager.onConfigChanged = { [weak self] in
             self?.touchBarManager.rebuild()
+        }
+
+        // If the OS permanently stops accepting our system-modal Touch Bar,
+        // restart ourselves — re-registering revives it (rate-limited).
+        touchBarManager.onSustainedHidden = { [weak self] in
+            self?.autoRestartForTouchBarRecovery()
+        }
+
+        // Restore the keys if they were on when we last exited
+        // (login item, or our own auto-restart)
+        if UserDefaults.standard.bool(forKey: TouchBarManager.keysWantedKey) {
+            touchBarManager.presentTouchBar()
         }
 
         // 3. Set up menu bar
@@ -212,6 +225,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func pasteClipboardItem(_ sender: NSMenuItem) {
         guard let text = sender.representedObject as? String else { return }
         ClipboardHistory.pasteText(text)
+    }
+
+    // MARK: - Touch Bar self-heal
+
+    private func autoRestartForTouchBarRecovery() {
+        let rateLimitKey = "lastTouchBarAutoRestart"
+        let last = UserDefaults.standard.double(forKey: rateLimitKey)
+        guard Date().timeIntervalSince1970 - last > 3600 else {
+            NSLog("bttopn: auto-restart rate-limited (last restart < 1h ago)")
+            return
+        }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: rateLimitKey)
+        NSLog("bttopn: Touch Bar unrecoverable — restarting to re-register with Touch Bar server")
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                           configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error = error { NSLog("bttopn: auto-restart failed: \(error)") }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            NSApp.terminate(nil)
+        }
     }
 
     // MARK: - Launch at Login
